@@ -32,8 +32,13 @@
 │   │   ├── page.tsx                      # 主页面（家长端/学生端）
 │   │   └── layout.tsx                    # 根布局
 │   ├── components/ui/                    # Shadcn UI 组件
+├── drizzle/                          # SQL 迁移文件
+│   ├── 0000_initial_schema.sql
+│   ├── 0001_rls_policies.sql
+│   └── README.md
+├── src/
 │   ├── db/
-│   │   └── schema.ts                     # 数据表 Schema (Drizzle)
+│   │   └── schema.ts                 # 数据表 Schema (Drizzle)
 │   ├── lib/
 │   │   ├── supabase/
 │   │   │   └── server.ts                 # 后端 Supabase Client
@@ -51,6 +56,12 @@ pnpm install
 
 # 开发环境
 pnpm dev
+
+# 数据库迁移（需配置 DATABASE_URL）
+pnpm db:migrate
+
+# 修改 schema 后生成迁移
+pnpm db:generate
 
 # 类型检查
 pnpm ts-check

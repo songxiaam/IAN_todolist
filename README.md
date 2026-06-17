@@ -69,6 +69,21 @@ src/
 └── hooks/
 ```
 
+## 数据库迁移
+
+表结构定义在 `src/db/schema.ts`，迁移 SQL 在 `drizzle/` 目录。
+
+```bash
+# 首次同步到 Supabase（需配置 DATABASE_URL）
+pnpm db:migrate
+
+# 修改 schema 后生成新迁移
+pnpm db:generate
+pnpm db:migrate
+```
+
+详见 [drizzle/README.md](./drizzle/README.md)。
+
 ## 常用命令
 
 ```bash
@@ -78,6 +93,8 @@ pnpm start        # 启动生产服务
 pnpm ts-check     # TypeScript 类型检查
 pnpm lint:build   # ESLint 检查
 pnpm validate     # 类型检查 + Lint
+pnpm db:migrate   # 执行数据库迁移
+pnpm db:generate  # 根据 schema 生成迁移文件
 ```
 
 ## 功能说明

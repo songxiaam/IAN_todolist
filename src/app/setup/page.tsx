@@ -269,8 +269,14 @@ export default function SetupPage() {
         {step === 'family' && (
           <div className="space-y-4 sketchy-enter">
             <p className="text-center text-[#5D4037] mb-4" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-              🏠 {role === 'parent' ? '创建新的家庭' : '加入已有家庭'}
+              🏠 {role === 'parent' ? '创建或加入家庭' : '加入已有家庭'}
             </p>
+
+            {role === 'parent' && (
+              <p className="text-center text-sm text-[#8D6E63] mb-4" style={{ fontFamily: "'Patrick Hand', cursive" }}>
+                被邀请的家长请选择「加入已有家庭」，输入家庭码后享有相同管理权限
+              </p>
+            )}
 
             {role === 'parent' ? (
               <div className="flex flex-col gap-4">
@@ -295,7 +301,8 @@ export default function SetupPage() {
                   <p className={`text-lg ${!isNewFamily ? 'text-[#FFB74D]' : 'text-[#5D4037]'}`} style={{ fontFamily: "'Patrick Hand', cursive" }}>
                     🗝️ 加入已有家庭
                   </p>
-                  <p className="text-sm text-[#8D6E63] mt-1">输入家庭码加入其他家庭</p>
+                  <p className="text-sm text-[#8D6E63] mt-1">输入家庭码加入，与主家长共同管理
+                  </p>
                 </button>
               </div>
             ) : (

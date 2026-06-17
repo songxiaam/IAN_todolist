@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   // 获取家庭成员
   const { data, error } = await client
     .from('profiles')
-    .select('id, name, role')
+    .select('id, name, role, username')
     .eq('family_id', profile.family_id);
 
   if (error) {

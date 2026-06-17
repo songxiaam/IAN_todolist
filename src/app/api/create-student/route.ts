@@ -1,85 +1,76 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  getSupabaseClient,
   getSupabaseServiceRoleKey,
   getSupabaseCredentials,
 } from '@/lib/supabase/server';
 import { createClient } from '@supabase/supabase-js';
+import {
+  isValidUsername,
+  sanitizeUsername,
+  toStudentAuthEmail,
+} from '@/lib/auth';
+import { verifyParentSession } from '@/lib/api-auth';
 
-// 创建学生账号（家长操作）
 export async function POST(request: NextRequest) {
   try {
-    // 1. 验证家长身份
-    const session = request.headers.get('x-session');
-    if (!session) {
-      return NextResponse.json({ error: '请先登录' }, { status: 401 });
+    const parent = await verifyParentSession(request);
+    if ('error' in parent) {
+      return NextResponse.json({ error: parent.error }, { status: parent.status });
     }
 
-    const { url, anonKey } = getSupabaseCredentials();
-    const parentClient = createClient(url, anonKey, {
-      global: { headers: { Authorization: `Bearer ${session}` } },
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-
-    // 验证家长身份
-    const { data: { user }, error: userError } = await parentClient.auth.getUser();
-    if (userError || !user) {
-      return NextResponse.json({ error: '用户信息无效' }, { status: 401 });
-    }
-
-    // 获取家长的 profile
-    const { data: parentProfile, error: profileError } = await parentClient
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-
-    if (profileError || !parentProfile) {
-      return NextResponse.json({ error: '请先设置您的角色' }, { status: 400 });
-    }
-
-    if (parentProfile.role !== 'parent') {
-      return NextResponse.json({ error: '只有家长可以创建学生账号' }, { status: 403 });
-    }
-
-    if (!parentProfile.family_id) {
-      return NextResponse.json({ error: '请先创建家庭' }, { status: 400 });
-    }
-
-    // 2. 解析请求参数
     const body = await request.json();
-    const { email, password, name } = body;
+    const { username, password, name } = body;
 
-    if (!email || !password || !name) {
-      return NextResponse.json({ error: '请填写邮箱、密码和姓名' }, { status: 400 });
+    if (!username || !password || !name) {
+      return NextResponse.json({ error: '请填写用户名、密码和姓名' }, { status: 400 });
+    }
+
+    if (!isValidUsername(username)) {
+      return NextResponse.json(
+        { error: '用户名需为 2-30 位字母、数字或下划线' },
+        { status: 400 },
+      );
     }
 
     if (password.length < 6) {
       return NextResponse.json({ error: '密码至少需要6位' }, { status: 400 });
     }
 
-    // 3. 使用 Service Role Key 创建学生账号
+    const sanitizedUsername = sanitizeUsername(username);
+    const authEmail = toStudentAuthEmail(sanitizedUsername);
+
     const serviceRoleKey = getSupabaseServiceRoleKey();
     if (!serviceRoleKey) {
       return NextResponse.json({ error: '服务配置错误' }, { status: 500 });
     }
 
+    const { url } = getSupabaseCredentials();
     const adminClient = createClient(url, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    // 创建用户（使用 admin API）
+    const { data: existingProfile } = await adminClient
+      .from('profiles')
+      .select('id')
+      .eq('username', sanitizedUsername)
+      .eq('role', 'student')
+      .maybeSingle();
+
+    if (existingProfile) {
+      return NextResponse.json({ error: '该用户名已被使用' }, { status: 400 });
+    }
+
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
-      email,
+      email: authEmail,
       password,
-      email_confirm: true, // 自动确认邮箱
-      user_metadata: { name },
+      email_confirm: true,
+      user_metadata: { name, username: sanitizedUsername, role: 'student' },
     });
 
     if (createError) {
       console.error('创建用户错误:', createError);
       if (createError.message.includes('already registered')) {
-        return NextResponse.json({ error: '该邮箱已被注册' }, { status: 400 });
+        return NextResponse.json({ error: '该用户名已被使用' }, { status: 400 });
       }
       return NextResponse.json({ error: '创建账号失败: ' + createError.message }, { status: 500 });
     }
@@ -88,19 +79,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '创建账号失败' }, { status: 500 });
     }
 
-    // 4. 创建学生的 profile（关联到家长的家庭）
     const { error: profileCreateError } = await adminClient
       .from('profiles')
       .insert({
         id: newUser.user.id,
         role: 'student',
-        family_id: parentProfile.family_id,
+        family_id: parent.profile.family_id,
         name,
+        username: sanitizedUsername,
       });
 
     if (profileCreateError) {
       console.error('创建 profile 错误:', profileCreateError);
-      // 尝试删除已创建的用户
       await adminClient.auth.admin.deleteUser(newUser.user.id);
       return NextResponse.json({ error: '创建学生资料失败' }, { status: 500 });
     }
@@ -110,7 +100,7 @@ export async function POST(request: NextRequest) {
       message: '学生账号创建成功',
       student: {
         id: newUser.user.id,
-        email: newUser.user.email,
+        username: sanitizedUsername,
         name,
       },
     });

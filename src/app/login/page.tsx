@@ -7,6 +7,7 @@ import { getSupabaseBrowserClientWithRetry } from '@/lib/supabase-browser';
 import { useSupabaseConfig } from '@/lib/supabase-config-inject';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 
+import { toLoginEmail } from '@/lib/auth';
 import { APP_ICON, APP_NAME } from '@/lib/constants';
 
 export default function LoginPage() {
@@ -14,7 +15,7 @@ export default function LoginPage() {
   const { isLoading: configLoading, error: configError } = useSupabaseConfig();
   
   const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState('');
+  const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -39,8 +40,8 @@ export default function LoginPage() {
   }
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      setError('请填写邮箱和密码');
+    if (!account || !password) {
+      setError('请填写账号和密码');
       return;
     }
 
@@ -49,13 +50,14 @@ export default function LoginPage() {
 
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
+      const loginEmail = toLoginEmail(account);
       const { data, error: loginError } = await supabase.auth.signInWithPassword({
-        email,
+        email: loginEmail,
         password,
       });
 
       if (loginError) {
-        setError('邮箱或密码错误');
+        setError('账号或密码错误');
         return;
       }
 
@@ -70,8 +72,13 @@ export default function LoginPage() {
   };
 
   const handleRegister = async () => {
-    if (!email || !password || !confirmPassword) {
+    if (!account || !password || !confirmPassword) {
       setError('请填写所有字段');
+      return;
+    }
+
+    if (account.includes('@') === false) {
+      setError('家长注册请使用邮箱，学生账号由家长创建');
       return;
     }
 
@@ -91,7 +98,7 @@ export default function LoginPage() {
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
       const { data, error: registerError } = await supabase.auth.signUp({
-        email,
+        email: account.trim(),
         password,
       });
 
@@ -171,15 +178,20 @@ export default function LoginPage() {
         <div className="space-y-4">
           <div>
             <label className="text-sm text-[#5D4037] mb-1 block" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-              📧 邮箱地址
+              {isLogin ? '📧 邮箱或学生用户名' : '📧 家长邮箱'}
             </label>
             <input
-              type="email"
-              placeholder="请输入邮箱..."
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text"
+              placeholder={isLogin ? '家长填邮箱，学生填用户名...' : '请输入邮箱...'}
+              value={account}
+              onChange={(e) => setAccount(e.target.value)}
               className="w-full py-3 px-4 pencil-input text-lg"
             />
+            {isLogin && (
+              <p className="text-xs text-[#8D6E63] mt-1" style={{ fontFamily: "'Patrick Hand', cursive" }}>
+                学生使用家长创建的用户名登录，无需邮箱
+              </p>
+            )}
           </div>
 
           <div>

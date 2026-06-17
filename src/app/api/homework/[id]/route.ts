@@ -3,10 +3,10 @@ import { getSupabaseClient } from '@/lib/supabase/server';
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const token = req.headers.get('x-session');
-  
+
   if (!token) {
     return NextResponse.json({ error: '请先登录' }, { status: 401 });
   }
@@ -22,15 +22,29 @@ export async function PATCH(
   const body = await req.json();
   const { status, started_at, completed_at } = body;
 
-  // 获取用户的 profile
   const { data: profile, error: profileError } = await client
     .from('profiles')
-    .select('family_id')
+    .select('family_id, role')
     .eq('id', user.id)
     .single();
 
   if (profileError || !profile) {
     return NextResponse.json({ error: '未找到用户资料' }, { status: 404 });
+  }
+
+  const { data: homework, error: homeworkError } = await client
+    .from('homeworks')
+    .select('id, family_id, assigned_to')
+    .eq('id', parseInt(id))
+    .eq('family_id', profile.family_id)
+    .maybeSingle();
+
+  if (homeworkError || !homework) {
+    return NextResponse.json({ error: '作业不存在' }, { status: 404 });
+  }
+
+  if (profile.role === 'student' && homework.assigned_to !== user.id) {
+    return NextResponse.json({ error: '这不是分配给您的作业' }, { status: 403 });
   }
 
   const updateData: Record<string, string | undefined> = {};
@@ -55,10 +69,10 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const token = req.headers.get('x-session');
-  
+
   if (!token) {
     return NextResponse.json({ error: '请先登录' }, { status: 401 });
   }
@@ -72,7 +86,6 @@ export async function DELETE(
 
   const { id } = await params;
 
-  // 获取用户的 profile
   const { data: profile, error: profileError } = await client
     .from('profiles')
     .select('family_id, role')
