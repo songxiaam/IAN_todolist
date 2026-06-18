@@ -30,7 +30,7 @@ import {
   UserPlus,
   Copy,
   Check,
-  Gift,
+  BookOpen,
 } from 'lucide-react';
 
 import { APP_ICON } from '@/lib/constants';
@@ -38,6 +38,7 @@ import { FocusTimerOverlay } from '@/components/focus-timer-overlay';
 import { CompleteHomeworkDialog } from '@/components/complete-homework-dialog';
 import { CelebrationOverlay } from '@/components/celebration-overlay';
 import { RewardsPanel } from '@/components/rewards-panel';
+import { WrongQuestionsPanel } from '@/components/wrong-questions-panel';
 import {
   saveFocusTimer,
   loadFocusTimer,
@@ -113,7 +114,7 @@ export default function HomePage() {
   const [filterStudentId, setFilterStudentId] = useState<string>('all');
   const [pausedSecondsUsed, setPausedSecondsUsed] = useState(0);
   const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'homework' | 'rewards'>('homework');
+  const [activeTab, setActiveTab] = useState<'homework' | 'rewards' | 'wrong'>('homework');
   const [completingHomework, setCompletingHomework] = useState<Homework | null>(null);
   const [showCompleteDialog, setShowCompleteDialog] = useState(false);
   const [sessionToken, setSessionToken] = useState('');
@@ -799,16 +800,32 @@ export default function HomePage() {
         </button>
         <button
           className={`flex-1 py-2 rounded-lg border-2 text-sm transition-all flex items-center justify-center gap-1 ${
+            activeTab === 'wrong'
+              ? 'crayon-button text-[#FFFDE7] border-transparent'
+              : 'bg-transparent text-[#8D6E63] border-[#D7CCC8]'
+          }`}
+          onClick={() => setActiveTab('wrong')}
+        >
+          <BookOpen className="w-4 h-4" />
+          错题集
+        </button>
+        <button
+          className={`flex-1 py-2 rounded-lg border-2 text-sm transition-all flex items-center justify-center gap-1 ${
             activeTab === 'rewards'
               ? 'crayon-button-orange text-[#5D4037] border-transparent'
               : 'bg-transparent text-[#8D6E63] border-[#D7CCC8]'
           }`}
           onClick={() => setActiveTab('rewards')}
         >
-          <Gift className="w-4 h-4" />
-          {profile.role === 'student' ? `积分兑换 (${pointsBalance})` : '积分管理'}
+          🎁 {profile.role === 'student' ? `积分 (${pointsBalance})` : '积分'}
         </button>
       </div>
+
+      {activeTab === 'wrong' && (
+        <div className="max-w-4xl mx-auto px-4 mt-4">
+          <WrongQuestionsPanel role={profile.role} familyMembers={familyMembers} />
+        </div>
+      )}
 
       {activeTab === 'rewards' && (
         <div className="max-w-4xl mx-auto px-4 mt-4">

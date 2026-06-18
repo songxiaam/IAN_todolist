@@ -160,3 +160,53 @@ export const pointTransactions = pgTable(
   },
   (table) => [index('point_transactions_profile_id_idx').on(table.profile_id)],
 );
+
+export const wrongQuestions = pgTable(
+  'wrong_questions',
+  {
+    id: serial().primaryKey(),
+    student_id: uuid('student_id').notNull(),
+    family_id: uuid('family_id')
+      .notNull()
+      .references(() => families.id, { onDelete: 'cascade' }),
+    subject: varchar('subject', { length: 50 }).notNull().default('其他'),
+    image_path: text('image_path').notNull(),
+    question_text: text('question_text'),
+    student_answer: text('student_answer'),
+    correct_answer: text('correct_answer'),
+    error_analysis: text('error_analysis'),
+    knowledge_points: text('knowledge_points'),
+    mastered: boolean('mastered').notNull().default(false),
+    review_count: integer('review_count').notNull().default(0),
+    last_reviewed_at: timestamp('last_reviewed_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index('wrong_questions_student_id_idx').on(table.student_id),
+    index('wrong_questions_family_id_idx').on(table.family_id),
+  ],
+);
+
+export const practiceQuestions = pgTable(
+  'practice_questions',
+  {
+    id: serial().primaryKey(),
+    wrong_question_id: integer('wrong_question_id')
+      .notNull()
+      .references(() => wrongQuestions.id, { onDelete: 'cascade' }),
+    question_text: text('question_text').notNull(),
+    question_type: varchar('question_type', { length: 20 }).notNull().default('fill'),
+    options: text('options'),
+    answer: text('answer').notNull(),
+    explanation: text('explanation'),
+    student_answer: text('student_answer'),
+    is_correct: boolean('is_correct'),
+    answered_at: timestamp('answered_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index('practice_questions_wrong_question_id_idx').on(table.wrong_question_id)],
+);

@@ -36,6 +36,20 @@
       "when": 1718582404000,
       "tag": "0004_points_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1718582405000,
+      "tag": "0005_wrong_questions",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1718582406000,
+      "tag": "0006_wrong_questions_rls",
+      "breakpoints": true
     }
   ]
 }
