@@ -1,18 +1,21 @@
-/** @deprecated 请使用 @/lib/ai/index，此文件保留兼容旧 import 路径 */
 export {
   analyzeWrongQuestionImage,
   detectSubjectFromImage,
   generateSimilarQuestions,
+} from './analyze';
+export {
   getAiRoutingSnapshot,
   getConfigPath,
   isAiConfigured,
   listResolvedModels,
   reloadAiModelConfig,
   resolveModelRef,
+} from './model-config';
+export {
   ALL_SUBJECT_LABELS,
   normalizeSubjectKey,
   subjectKeyToLabel,
-} from './ai/index';
+} from './subjects';
 export type {
   AiCapability,
   AiRoutingSnapshot,
@@ -20,4 +23,4 @@ export type {
   AiSubjectLabel,
   GeneratedPracticeQuestion,
   WrongQuestionAnalysis,
-} from './ai/index';
+} from './types';

@@ -1,0 +1,63 @@
+{
+  "_comment": "按「能力 + 学科」配置模型。开发时改此文件，或用环境变量 AI_MODEL_{能力}_{学科} 快速覆盖。provider 指向下方 providers，model 为 OpenAI 兼容接口的 model id。",
+  "providers": {
+    "dashscope": {
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiKeyEnv": "DASHSCOPE_API_KEY"
+    },
+    "deepseek": {
+      "baseUrl": "https://api.deepseek.com/v1",
+      "apiKeyEnv": "DEEPSEEK_API_KEY"
+    },
+    "siliconflow": {
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "apiKeyEnv": "SILICONFLOW_API_KEY"
+    },
+    "default": {
+      "baseUrl": "${AI_API_BASE_URL}",
+      "apiKeyEnv": "AI_API_KEY"
+    }
+  },
+  "defaultProvider": "default",
+  "capabilities": {
+    "subject_detect": {
+      "provider": "default",
+      "default": "qwen-vl-plus"
+    },
+    "vision_analyze": {
+      "provider": "default",
+      "default": "qwen-vl-max",
+      "math": "qwen-vl-max",
+      "physics": "qwen-vl-max",
+      "chemistry": "qwen-vl-max",
+      "biology": "qwen-vl-max",
+      "chinese": "qwen-vl-max",
+      "english": "qwen-vl-max",
+      "science": "qwen-vl-plus",
+      "history": "qwen-vl-plus",
+      "geography": "qwen-vl-plus",
+      "politics": "qwen-vl-plus",
+      "other": "qwen-vl-max"
+    },
+    "generate_similar": {
+      "provider": "default",
+      "default": "qwen-max",
+      "math": "deepseek:deepseek-reasoner",
+      "physics": "deepseek:deepseek-reasoner",
+      "chemistry": "deepseek:deepseek-reasoner",
+      "biology": "qwen-max",
+      "chinese": "qwen-max",
+      "english": "qwen-max",
+      "science": "qwen-max",
+      "history": "qwen-max",
+      "geography": "qwen-max",
+      "politics": "qwen-max",
+      "other": "qwen-max"
+    },
+    "handwriting_remove": {
+      "provider": "default",
+      "default": "disabled",
+      "_comment": "去手写为独立图像 API，后续接入百度/腾讯试卷擦除时在此配置"
+    }
+  }
+}

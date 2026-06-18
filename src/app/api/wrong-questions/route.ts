@@ -115,5 +115,11 @@ export async function POST(req: NextRequest) {
   }
 
   const { data: urlData } = admin.storage.from(BUCKET).getPublicUrl(path);
-  return NextResponse.json({ ...data, image_url: urlData.publicUrl });
+  return NextResponse.json({
+    ...data,
+    image_url: urlData.publicUrl,
+    ...(process.env.NODE_ENV === 'development' && analysis._meta
+      ? { ai_meta: analysis._meta }
+      : {}),
+  });
 }
