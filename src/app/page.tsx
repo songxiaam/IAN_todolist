@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import Image from 'next/image';
 import { getSupabaseBrowserClientWithRetry } from '@/lib/supabase-browser';
 import { useSupabaseConfig } from '@/lib/supabase-config-inject';
 import {
@@ -20,25 +19,22 @@ import {
 } from '@/components/ui/select';
 import {
   Loader2,
-  Plus,
-  Trash2,
-  Clock,
-  Play,
-  LogOut,
-  GraduationCap,
   X,
   UserPlus,
-  Copy,
-  Check,
-  BookOpen,
+  ChevronRight,
+  PencilLine,
 } from 'lucide-react';
 
-import { APP_ICON } from '@/lib/constants';
 import { FocusTimerOverlay } from '@/components/focus-timer-overlay';
 import { CompleteHomeworkDialog } from '@/components/complete-homework-dialog';
 import { CelebrationOverlay } from '@/components/celebration-overlay';
-import { RewardsPanel } from '@/components/rewards-panel';
 import { WrongQuestionsPanel } from '@/components/wrong-questions-panel';
+import { HomeworkGradingPanel } from '@/components/homework-grading-panel';
+import { MobileTabBar, type MobileTabId } from '@/components/mobile-tab-bar';
+import { CameraCaptureOverlay, type CaptureMode, type PendingCapture } from '@/components/camera-capture-overlay';
+import { NavigationBar, type NavOverride } from '@/components/navigation-bar';
+import { MinePanel } from '@/components/mine-panel';
+import { HomeworkDetail } from '@/components/homework-detail';
 import {
   saveFocusTimer,
   loadFocusTimer,
@@ -53,6 +49,7 @@ interface Profile {
   role: 'parent' | 'student';
   family_id: string;
   name: string;
+  username?: string | null;
   points_balance?: number;
 }
 
@@ -89,7 +86,6 @@ export default function HomePage() {
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [showStudentDialog, setShowStudentDialog] = useState(false);
   const [currentTimer, setCurrentTimer] = useState<number | null>(null);
   const [timerSeconds, setTimerSeconds] = useState(0);
@@ -114,7 +110,12 @@ export default function HomePage() {
   const [filterStudentId, setFilterStudentId] = useState<string>('all');
   const [pausedSecondsUsed, setPausedSecondsUsed] = useState(0);
   const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'homework' | 'rewards' | 'wrong'>('homework');
+  const [activeTab, setActiveTab] = useState<MobileTabId>('homework');
+  const [navOverride, setNavOverride] = useState<NavOverride | null>(null);
+  const [selectedHomeworkId, setSelectedHomeworkId] = useState<number | null>(null);
+  const [showCamera, setShowCamera] = useState(false);
+  const [pendingCapture, setPendingCapture] = useState<PendingCapture | null>(null);
+  const [pendingCaptureMode, setPendingCaptureMode] = useState<CaptureMode | null>(null);
   const [completingHomework, setCompletingHomework] = useState<Homework | null>(null);
   const [showCompleteDialog, setShowCompleteDialog] = useState(false);
   const [sessionToken, setSessionToken] = useState('');
@@ -387,6 +388,44 @@ export default function HomePage() {
     pauseStartedAt,
     persistFocusTimer,
   ]);
+
+  const handleCameraCapture = useCallback((file: File, mode: CaptureMode, studentId?: string) => {
+    setShowCamera(false);
+    setPendingCaptureMode(mode);
+    setPendingCapture({ file, studentId, nonce: Date.now() });
+    setNavOverride(null);
+    setSelectedHomeworkId(null);
+    setActiveTab(mode === 'wrong' ? 'wrong' : 'grading');
+  }, []);
+
+  const handlePendingCaptureConsumed = useCallback(() => {
+    setPendingCapture(null);
+    setPendingCaptureMode(null);
+  }, []);
+
+  const TAB_TITLES: Record<MobileTabId, string> = {
+    homework: '作业',
+    wrong: '错题集',
+    grading: '批改',
+    mine: '我的',
+  };
+
+  const handleTabChange = useCallback((tab: MobileTabId) => {
+    setActiveTab(tab);
+    setNavOverride(null);
+    setSelectedHomeworkId(null);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'homework' && selectedHomeworkId !== null) {
+      setNavOverride({
+        title: '作业详情',
+        onBack: () => setSelectedHomeworkId(null),
+      });
+    } else if (activeTab === 'homework') {
+      setNavOverride(null);
+    }
+  }, [activeTab, selectedHomeworkId]);
 
   const handleLogout = async () => {
     const supabase = await getSupabaseBrowserClientWithRetry();
@@ -724,7 +763,7 @@ export default function HomePage() {
   const isStudentFocusMode = profile.role === 'student' && currentTimer !== null && !showCompleteDialog;
 
   return (
-    <div className="min-h-screen paper-bg pb-8">
+    <div className="min-h-dvh paper-bg flex flex-col">
       {showCelebration && (
         <CelebrationOverlay
           pointsEarned={celebrationPoints}
@@ -757,142 +796,82 @@ export default function HomePage() {
         />
       )}
 
-      <div className={isStudentFocusMode ? 'pointer-events-none select-none' : undefined}>
-      {/* 手绘风格 Header */}
-      <div className="bg-[#F5E6D3] sticky top-0 z-10 border-b-2 border-[#5D4037]">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full border-2 border-[#5D4037] overflow-hidden transform rotate-3">
-              <Image src={APP_ICON} alt="App" width={40} height={40} className="w-full h-full object-cover" unoptimized />
-            </div>
-            <div>
-              <h1 className="text-lg text-[#5D4037]" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-                📚 作业管理
-              </h1>
-              <p className="text-sm text-[#8D6E63]">
-                {profile.role === 'parent'
-                  ? `👨‍👩‍👧 家长端 · ${students.length} 个孩子`
-                  : `🎒 ${profile.name} · 🌟 ${pointsBalance} 积分`}
-              </p>
-            </div>
-          </div>
-          <button
-            className="px-3 py-2 bg-transparent text-[#8D6E63] border-2 border-[#D7CCC8] rounded-lg hover:bg-[#F5E6D3] transition-all text-sm flex items-center gap-2"
-            onClick={() => setShowLogoutDialog(true)}
-          >
-            <LogOut className="w-4 h-4" />
-            退出
-          </button>
-        </div>
-      </div>
+      <div className={`flex flex-1 flex-col ${isStudentFocusMode ? 'pointer-events-none select-none' : 'pb-[calc(5rem+env(safe-area-inset-bottom,0px))]'}`}>
+      <NavigationBar
+        title={TAB_TITLES[activeTab]}
+        subtitle={
+          !navOverride && activeTab === 'homework' && profile.role === 'parent'
+            ? `${students.length} 个孩子`
+            : undefined
+        }
+        navOverride={navOverride}
+      />
 
-      {/* 标签切换 */}
-      <div className="max-w-4xl mx-auto px-4 mt-3 flex gap-2">
-        <button
-          className={`flex-1 py-2 rounded-lg border-2 text-sm transition-all ${
-            activeTab === 'homework'
-              ? 'crayon-button text-[#FFFDE7] border-transparent'
-              : 'bg-transparent text-[#8D6E63] border-[#D7CCC8]'
-          }`}
-          onClick={() => setActiveTab('homework')}
-        >
-          📚 作业
-        </button>
-        <button
-          className={`flex-1 py-2 rounded-lg border-2 text-sm transition-all flex items-center justify-center gap-1 ${
-            activeTab === 'wrong'
-              ? 'crayon-button text-[#FFFDE7] border-transparent'
-              : 'bg-transparent text-[#8D6E63] border-[#D7CCC8]'
-          }`}
-          onClick={() => setActiveTab('wrong')}
-        >
-          <BookOpen className="w-4 h-4" />
-          错题集
-        </button>
-        <button
-          className={`flex-1 py-2 rounded-lg border-2 text-sm transition-all flex items-center justify-center gap-1 ${
-            activeTab === 'rewards'
-              ? 'crayon-button-orange text-[#5D4037] border-transparent'
-              : 'bg-transparent text-[#8D6E63] border-[#D7CCC8]'
-          }`}
-          onClick={() => setActiveTab('rewards')}
-        >
-          🎁 {profile.role === 'student' ? `积分 (${pointsBalance})` : '积分'}
-        </button>
-      </div>
-
-      {activeTab === 'wrong' && (
-        <div className="max-w-4xl mx-auto px-4 mt-4">
-          <WrongQuestionsPanel role={profile.role} familyMembers={familyMembers} />
-        </div>
-      )}
-
-      {activeTab === 'rewards' && (
-        <div className="max-w-4xl mx-auto px-4 mt-4">
-          <RewardsPanel
+      <main className="mx-auto w-full max-w-lg flex-1 px-4 pt-3 pb-4">
+        {activeTab === 'grading' && (
+          <HomeworkGradingPanel
             role={profile.role}
             familyMembers={familyMembers}
-            onPointsChange={setPointsBalance}
+            pendingCapture={pendingCaptureMode === 'grading' ? pendingCapture : null}
+            onPendingCaptureConsumed={handlePendingCaptureConsumed}
+            onNavOverride={setNavOverride}
           />
-        </div>
-      )}
+        )}
 
-      {activeTab === 'homework' && (
-      <>
-      {profile.role === 'parent' && (
-        <div className="max-w-4xl mx-auto px-4 mt-4">
-          {/* 邀请家长 */}
-          <div className="sketchy-card p-4 mb-4 sketchy-enter bg-[#7CB342]/10">
-            <h3 className="text-[#5D4037] mb-2" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-              👨‍👩‍👧 邀请其他家长
-            </h3>
-            <p className="text-sm text-[#8D6E63] mb-3" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-              将家庭码发给另一位家长，对方注册后选择「家长 → 加入已有家庭」，即可享有相同的管理权限
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-[#FFFDE7] border-2 border-[#D7CCC8] rounded-lg text-sm text-[#5D4037] break-all">
-                {profile.family_id}
-              </code>
-              <button
-                className="px-3 py-2 crayon-button text-[#FFFDE7] text-sm flex items-center gap-1 shrink-0"
-                onClick={handleCopyFamilyCode}
-              >
-                {copiedFamilyCode ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                {copiedFamilyCode ? '已复制' : '复制'}
-              </button>
-            </div>
-          </div>
+        {activeTab === 'wrong' && (
+          <WrongQuestionsPanel
+            role={profile.role}
+            familyMembers={familyMembers}
+            pendingCapture={pendingCaptureMode === 'wrong' ? pendingCapture : null}
+            onPendingCaptureConsumed={handlePendingCaptureConsumed}
+            onNavOverride={setNavOverride}
+          />
+        )}
 
-          {/* 家庭成员卡片 */}
-          <div className="sketchy-card p-4 mb-4 sketchy-enter bg-[#F5E6D3]/50">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[#5D4037]" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-                🏠 家庭成员 ({familyMembers.length}人)
-              </h3>
-              <button
-                className="px-3 py-2 crayon-button text-[#FFFDE7] text-sm flex items-center gap-1"
-                onClick={() => setShowStudentDialog(true)}
-              >
-                <UserPlus className="w-4 h-4" />
-                创建学生账号
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {familyMembers.map((member, idx) => (
-                <div 
-                  key={member.id}
-                  className={`px-3 py-2 rounded-lg border-2 border-[#D7CCC8] bg-[#FFFDE7] transform ${idx % 2 === 0 ? '-rotate-1' : 'rotate-1'}`}
-                  style={{ fontFamily: "'Patrick Hand', cursive" }}
-                >
-                  {member.role === 'parent' ? '👨‍👩‍👧' : '🎒'} {member.name}
-                  {member.role === 'student' && member.username && (
-                    <span className="text-xs text-[#8D6E63] ml-1">(@{member.username})</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+        {activeTab === 'mine' && (
+          <MinePanel
+            role={profile.role}
+            name={profile.name}
+            familyId={profile.family_id}
+            familyMembers={familyMembers}
+            pointsBalance={pointsBalance}
+            username={profile.username ?? familyMembers.find((m) => m.id === profile.id)?.username}
+            copiedFamilyCode={copiedFamilyCode}
+            onCopyFamilyCode={handleCopyFamilyCode}
+            onCreateStudent={() => setShowStudentDialog(true)}
+            onLogout={handleLogout}
+            onPointsChange={setPointsBalance}
+            onNavOverride={setNavOverride}
+          />
+        )}
 
+        {activeTab === 'homework' && (
+        <>
+        {selectedHomeworkId !== null ? (() => {
+          const hw = displayHomeworks.find((h) => h.id === selectedHomeworkId);
+          if (!hw) return null;
+          return (
+            <HomeworkDetail
+              homework={hw}
+              role={profile.role}
+              currentTimer={currentTimer}
+              onStart={() => handleStartHomework(hw)}
+              onResume={() => handleResumeFocus(hw)}
+              onDelete={() => {
+                void handleDeleteHomework(hw.id);
+                setSelectedHomeworkId(null);
+              }}
+              onReview={(action) => handleReviewHomework(hw.id, action)}
+              getStatusText={getStatusText}
+              getStatusColor={getStatusColor}
+              getReviewText={getReviewText}
+              getReviewColor={getReviewColor}
+            />
+          );
+        })() : (
+        <>
+        {profile.role === 'parent' && (
+        <div className="space-y-4 mb-4">
           {/* 按孩子筛选 & 统计 */}
           {students.length > 1 && (
             <div className="sketchy-card p-4 mb-4 sketchy-enter">
@@ -972,152 +951,85 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      )}
+        )}
 
-      {/* 手绘作业列表 */}
-      <div className="max-w-4xl mx-auto px-4 mt-4">
-        <div className="space-y-3">
+      {/* 作业列表 */}
+      <div className="space-y-2">
           {displayHomeworks.length === 0 && (
             <div className="sketchy-card p-8 text-center text-[#8D6E63]">
               {profile.role === 'parent' 
-                ? '📝 还没有作业，点击下方按钮添加吧！' 
+                ? '📝 还没有作业，点右下角布置吧' 
                 : '📚 家长还没有布置作业哦~'}
             </div>
           )}
 
-          {displayHomeworks.map((hw, index) => (
-            <div 
-              key={hw.id} 
-              className={`sketchy-card p-4 sketchy-enter ${hw.status === 'completed' ? 'bg-[#7CB342]/10' : ''}`}
-              style={{ transform: `rotate(${index % 2 === 0 ? -1 : 1}deg)` }}
+          {displayHomeworks.map((hw) => (
+            <button
+              key={hw.id}
+              type="button"
+              className={`sketchy-card flex w-full items-center gap-3 p-4 text-left active:bg-[#F5E6D3]/40 ${hw.status === 'completed' ? 'bg-[#7CB342]/10' : ''}`}
+              onClick={() => setSelectedHomeworkId(hw.id)}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  {/* 状态和科目 */}
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className={`status-sketchy ${getStatusColor(hw.status)}`}>
-                      {getStatusText(hw.status)}
-                    </span>
-                    <span className="text-xs text-[#8D6E63] bg-[#F5E6D3] px-2 py-1 rounded-lg">
-                      {hw.subject}
-                    </span>
-                    {(hw.points ?? 0) > 0 && (
-                      <span className="text-xs text-[#FFB74D] bg-[#FFB74D]/20 px-2 py-1 rounded-lg">
-                        🌟 {hw.points} 积分
-                      </span>
-                    )}
-                    {hw.status === 'completed' && hw.review_status && hw.review_status !== 'none' && (
-                      <span className={`status-sketchy text-xs ${getReviewColor(hw.review_status)}`}>
-                        {getReviewText(hw.review_status)}
-                      </span>
-                    )}
-                  </div>
-                  
-                  {/* 标题 */}
-                  <h3 className="text-lg text-[#5D4037]" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-                    {hw.status === 'completed' && '✓ '}
-                    {hw.title}
-                  </h3>
-                  
-                  {/* 描述 */}
-                  {hw.description && (
-                    <p className="text-sm text-[#8D6E63] mt-1">{hw.description}</p>
-                  )}
-                  
-                  {/* 时间信息 */}
-                  <div className="flex items-center gap-4 mt-2 text-sm text-[#8D6E63]">
-                    <Clock className="w-4 h-4" />
-                    <span>预计 {hw.estimated_minutes} 分钟</span>
-                    {hw.deadline && (
-                      <span>截止: {new Date(hw.deadline).toLocaleDateString()}</span>
-                    )}
-                  </div>
-                  
-                  {/* 分配信息 */}
-                  {hw.assigned_profile ? (
-                    <div className="flex items-center gap-2 mt-2 text-sm text-[#8D6E63]">
-                      <GraduationCap className="w-4 h-4" />
-                      <span>
-                        分配给: {hw.assigned_profile.name}
-                        {hw.assigned_profile.username && ` (@${hw.assigned_profile.username})`}
-                      </span>
-                    </div>
-                  ) : profile.role === 'parent' ? (
-                    <div className="flex items-center gap-2 mt-2 text-sm text-[#EF5350]">
-                      <GraduationCap className="w-4 h-4" />
-                      <span>未分配学生</span>
-                    </div>
-                  ) : null}
-                </div>
-                
-                {/* 操作按钮 */}
-                <div className="flex items-center gap-2">
-                  {profile.role === 'parent' && hw.status === 'completed' && hw.review_status === 'pending' && (
-                    <>
-                      <button
-                        className="px-2 py-1 text-xs crayon-button text-[#FFFDE7]"
-                        onClick={() => handleReviewHomework(hw.id, 'approve')}
-                      >
-                        通过
-                      </button>
-                      <button
-                        className="px-2 py-1 text-xs border-2 border-[#EF5350] text-[#EF5350] rounded-lg"
-                        onClick={() => handleReviewHomework(hw.id, 'reject')}
-                      >
-                        不通过
-                      </button>
-                    </>
-                  )}
-
-                  {profile.role === 'parent' && (
-                    <button
-                      className="p-2 bg-transparent text-[#EF5350] border-2 border-[#EF5350]/30 rounded-lg hover:bg-[#EF5350]/10 transition-all"
-                      onClick={() => handleDeleteHomework(hw.id)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                  
-                  {profile.role === 'student' && hw.status === 'pending' && (
-                    <button
-                      className="px-3 py-2 crayon-button text-[#FFFDE7] flex items-center gap-1 text-sm"
-                      onClick={() => handleStartHomework(hw)}
-                    >
-                      <Play className="w-4 h-4" />
-                      开始!
-                    </button>
-                  )}
-                  
-                  {profile.role === 'student' && hw.status === 'in_progress' && currentTimer !== hw.id && (
-                    <button
-                      className="px-3 py-2 crayon-button-orange text-[#5D4037] flex items-center gap-1 text-sm"
-                      onClick={() => handleResumeFocus(hw)}
-                    >
-                      <Play className="w-4 h-4" />
-                      继续学习
-                    </button>
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <span className={`status-sketchy text-xs ${getStatusColor(hw.status)}`}>
+                    {getStatusText(hw.status)}
+                  </span>
+                  <span className="text-xs text-[#8D6E63]">{hw.subject}</span>
+                  {(hw.points ?? 0) > 0 && (
+                    <span className="text-xs text-[#FFB74D]">🌟 {hw.points}</span>
                   )}
                 </div>
+                <h3 className="truncate text-[#5D4037]" style={{ fontFamily: "'Patrick Hand', cursive" }}>
+                  {hw.title}
+                </h3>
+                <p className="mt-0.5 text-xs text-[#8D6E63]">
+                  预计 {hw.estimated_minutes} 分钟
+                  {hw.deadline && ` · 截止 ${new Date(hw.deadline).toLocaleDateString('zh-CN')}`}
+                </p>
               </div>
-            </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-[#8D6E63]" />
+            </button>
           ))}
-        </div>
       </div>
 
-      {/* 家长端 - 手绘添加按钮 */}
-      {profile.role === 'parent' && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2">
-          <button
-            className="px-6 py-4 crayon-button text-[#FFFDE7] text-lg shadow-lg flex items-center gap-2 hover:animate-bounce"
-            onClick={openAddDialog}
-          >
-            <Plus className="w-5 h-5" />
-            添加作业 ✏️
-          </button>
-        </div>
+        </>
+        )}
+      </>
+        )}
+      </main>
+
+      {/* 家长端 - 右下角布置作业 */}
+      {profile.role === 'parent' && activeTab === 'homework' && selectedHomeworkId === null && !isStudentFocusMode && (
+        <button
+          type="button"
+          className="fixed right-4 z-40 flex h-12 items-center gap-1.5 rounded-full border-2 border-[#5D4037] bg-[#FFB74D] px-4 text-sm text-[#5D4037] shadow-md active:scale-95 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))]"
+          style={{ fontFamily: "'Patrick Hand', cursive" }}
+          onClick={openAddDialog}
+        >
+          <PencilLine className="h-4 w-4" />
+          布置
+        </button>
       )}
 
-      </>
+      </div>
+
+      {!isStudentFocusMode && (
+        <MobileTabBar
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          onCaptureClick={() => setShowCamera(true)}
+        />
+      )}
+
+      {showCamera && profile && (
+        <CameraCaptureOverlay
+          open={showCamera}
+          onClose={() => setShowCamera(false)}
+          onCapture={handleCameraCapture}
+          role={profile.role}
+          students={students}
+        />
       )}
 
       {/* 手绘添加作业对话框 */}
@@ -1265,34 +1177,6 @@ export default function HomePage() {
         </DialogContent>
       </Dialog>
 
-      {/* 手绘退出确认对话框 */}
-      <Dialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
-        <DialogContent className="bg-[#FFFDE7] border-2 border-[#5D4037] rounded-2xl max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-center text-[#5D4037]" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-              确认退出？
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-center text-[#8D6E63] mt-2" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-            确定要退出登录吗？
-          </p>
-          <div className="flex gap-3 mt-6">
-            <button
-              className="flex-1 py-3 bg-transparent text-[#8D6E63] border-2 border-[#D7CCC8] rounded-lg hover:bg-[#F5E6D3] transition-all"
-              onClick={() => setShowLogoutDialog(false)}
-            >
-              留下
-            </button>
-            <button
-              className="flex-1 py-3 crayon-button-orange text-[#5D4037]"
-              onClick={handleLogout}
-            >
-              退出
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
       {/* 创建学生账号对话框 */}
       <Dialog open={showStudentDialog} onOpenChange={(open) => {
         setShowStudentDialog(open);
@@ -1395,7 +1279,6 @@ export default function HomePage() {
           )}
         </DialogContent>
       </Dialog>
-      </div>
     </div>
   );
 }

@@ -62,6 +62,46 @@ async function detectSubjectFromImage(
   };
 }
 
+async function analyzeWrongQuestionCrop(
+  cropBuffer: Buffer,
+  mimeType: string,
+  subjectHint?: string,
+): Promise<WrongQuestionAnalysis> {
+  const subjectKey = subjectHint ? normalizeSubjectKey(subjectHint) : 'other';
+  const label = subjectHint ? subjectKeyToLabel(subjectKey) : '综合';
+
+  const visionResolved = resolveModelRef('vision_analyze', subjectKey);
+  if (!visionResolved) {
+    throw new Error('未配置题目理解模型（vision_analyze）');
+  }
+
+  const content = await chatCompletion(
+    visionResolved,
+    [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: ANALYZE_PROMPT(label) },
+          imageMessagePart(cropBuffer, mimeType),
+        ],
+      },
+    ],
+    true,
+  );
+
+  const parsed = parseJson<WrongQuestionAnalysis>(content);
+  const finalSubjectKey = normalizeSubjectKey(parsed.subject || label);
+
+  return {
+    subject: subjectKeyToLabel(finalSubjectKey),
+    question: parsed.question || '',
+    student_answer: parsed.student_answer || '',
+    correct_answer: parsed.correct_answer || '',
+    error_analysis: parsed.error_analysis || '',
+    knowledge_points: Array.isArray(parsed.knowledge_points) ? parsed.knowledge_points : [],
+  };
+}
+
 async function analyzeWrongQuestionImage(
   imageBuffer: Buffer,
   mimeType: string,
@@ -177,4 +217,4 @@ async function generateSimilarQuestions(
   }));
 }
 
-export { detectSubjectFromImage, analyzeWrongQuestionImage, generateSimilarQuestions };
+export { detectSubjectFromImage, analyzeWrongQuestionImage, analyzeWrongQuestionCrop, generateSimilarQuestions };

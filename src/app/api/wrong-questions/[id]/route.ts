@@ -74,6 +74,11 @@ export async function PATCH(
   if (typeof body.mastered === 'boolean') {
     updates.mastered = body.mastered;
   }
+  if (typeof body.mastery_level === 'number') {
+    const level = Math.max(0, Math.min(3, body.mastery_level));
+    updates.mastery_level = level;
+    updates.mastered = level >= 2;
+  }
   if (body.action === 'review') {
     updates.review_count = (record.review_count ?? 0) + 1;
     updates.last_reviewed_at = new Date().toISOString();

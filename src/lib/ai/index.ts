@@ -1,8 +1,10 @@
 export {
   analyzeWrongQuestionImage,
+  analyzeWrongQuestionCrop,
   detectSubjectFromImage,
   generateSimilarQuestions,
 } from './analyze';
+export { gradeHomeworkImage } from './grade-homework';
 export {
   getAiRoutingSnapshot,
   getConfigPath,

@@ -1,18 +1,20 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Camera,
   Loader2,
   Trash2,
-  BookOpen,
-  Sparkles,
-  ChevronDown,
-  ChevronUp,
-  CheckCircle2,
-  XCircle,
+  ChevronRight,
+  Printer,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import { getSupabaseBrowserClientWithRetry } from '@/lib/supabase-browser';
+import { ImageCropSelector } from '@/components/image-crop-selector';
+import { StudentPicker, getDefaultStudentId } from '@/components/student-picker';
+import type { NormalizedBBox } from '@/lib/image-crop';
+import type { PendingCapture } from '@/components/camera-capture-overlay';
+import type { NavOverride } from '@/components/navigation-bar';
 
 interface WrongQuestionItem {
   id: number;
@@ -21,44 +23,73 @@ interface WrongQuestionItem {
   question_text: string | null;
   student_answer: string | null;
   correct_answer: string | null;
+  solution_steps: string | null;
   error_analysis: string | null;
   knowledge_points: string | null;
+  mastery_level: number;
   mastered: boolean;
   review_count: number;
   created_at: string;
   student_id: string;
+  source_type?: string;
 }
 
-interface PracticeItem {
-  id: number;
-  question_text: string;
-  question_type: string;
-  options: string | null;
-  answer: string;
-  explanation: string | null;
-  student_answer: string | null;
-  is_correct: boolean | null;
-}
+const MASTERY_LABELS = ['未掌握', '初步了解', '基本掌握', '完全掌握'];
 
 interface WrongQuestionsPanelProps {
   role: 'parent' | 'student';
   familyMembers: { id: string; name: string; role: string }[];
+  pendingCapture?: PendingCapture | null;
+  onPendingCaptureConsumed?: () => void;
+  onNavOverride?: (nav: NavOverride | null) => void;
 }
 
-export function WrongQuestionsPanel({ role, familyMembers }: WrongQuestionsPanelProps) {
+export function WrongQuestionsPanel({
+  role,
+  familyMembers,
+  pendingCapture,
+  onPendingCaptureConsumed,
+  onNavOverride,
+}: WrongQuestionsPanelProps) {
+  const students = familyMembers.filter((m) => m.role === 'student');
+  const [selectedStudentId, setSelectedStudentId] = useState(() => getDefaultStudentId(students));
   const [items, setItems] = useState<WrongQuestionItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [analyzing, setAnalyzing] = useState(false);
   const [aiConfigured, setAiConfigured] = useState(true);
-  const [filterStudentId, setFilterStudentId] = useState('all');
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [practiceMap, setPracticeMap] = useState<Record<number, PracticeItem[]>>({});
-  const [generatingId, setGeneratingId] = useState<number | null>(null);
-  const [answerInputs, setAnswerInputs] = useState<Record<number, string>>({});
-  const [submittingId, setSubmittingId] = useState<number | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [cropPreviewUrl, setCropPreviewUrl] = useState<string | null>(null);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [printing, setPrinting] = useState(false);
 
-  const students = familyMembers.filter((m) => m.role === 'student');
+  useEffect(() => {
+    if (role === 'parent' && students.length === 1 && !selectedStudentId) {
+      setSelectedStudentId(students[0].id);
+    }
+  }, [role, students, selectedStudentId]);
+
+  const handleCancelCrop = useCallback(() => {
+    if (cropPreviewUrl) URL.revokeObjectURL(cropPreviewUrl);
+    setCropPreviewUrl(null);
+    setCropFile(null);
+  }, [cropPreviewUrl]);
+
+  useEffect(() => {
+    if (cropPreviewUrl) {
+      onNavOverride?.({
+        title: '框选错题',
+        onBack: handleCancelCrop,
+      });
+    } else if (selectedItemId !== null) {
+      onNavOverride?.({
+        title: '错题详情',
+        onBack: () => setSelectedItemId(null),
+      });
+    } else {
+      onNavOverride?.(null);
+    }
+  }, [cropPreviewUrl, selectedItemId, onNavOverride, handleCancelCrop]);
 
   const getToken = async () => {
     const supabase = await getSupabaseBrowserClientWithRetry();
@@ -67,160 +98,126 @@ export function WrongQuestionsPanel({ role, familyMembers }: WrongQuestionsPanel
 
   const loadData = useCallback(async () => {
     const token = await getToken();
-    if (!token) return;
-
     const params = new URLSearchParams();
-    if (role === 'parent' && filterStudentId !== 'all') {
-      params.set('student_id', filterStudentId);
+    if (role === 'parent' && selectedStudentId) {
+      params.set('student_id', selectedStudentId);
     }
-
     const res = await fetch(`/api/wrong-questions?${params}`, {
       headers: { 'x-session': token },
     });
-    const data = await res.json();
-
-    if (res.ok) {
-      setItems(data.items ?? []);
-      setAiConfigured(data.aiConfigured !== false);
+    if (!res.ok) {
+      setLoading(false);
+      return;
     }
+    const data = await res.json();
+    setItems(data.items ?? []);
+    setAiConfigured(data.aiConfigured !== false);
     setLoading(false);
-  }, [role, filterStudentId]);
+  }, [role, selectedStudentId]);
 
   useEffect(() => {
+    setLoading(true);
+    setSelectedIds(new Set());
+    setSelectedItemId(null);
     loadData();
   }, [loadData]);
 
-  const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  useEffect(() => {
+    if (!pendingCapture) return;
+    if (role === 'parent' && pendingCapture.studentId) {
+      setSelectedStudentId(pendingCapture.studentId);
+    }
+    if (role === 'parent' && !pendingCapture.studentId && students.length > 1) {
+      onPendingCaptureConsumed?.();
+      return;
+    }
+    setCropFile(pendingCapture.file);
+    setCropPreviewUrl(URL.createObjectURL(pendingCapture.file));
+    onPendingCaptureConsumed?.();
+  }, [pendingCapture, role, students.length, onPendingCaptureConsumed]);
 
-    setAnalyzing(true);
+  const handleConfirmCrop = async (regions: NormalizedBBox[]) => {
+    if (!cropFile) return;
+    setSubmitting(true);
     const token = await getToken();
     const formData = new FormData();
-    formData.append('image', file);
+    formData.append('image', cropFile);
+    formData.append('regions', JSON.stringify(regions));
+    if (role === 'parent') {
+      formData.append('student_id', selectedStudentId);
+    }
 
     const res = await fetch('/api/wrong-questions', {
       method: 'POST',
       headers: { 'x-session': token },
       body: formData,
     });
-
     const data = await res.json();
-    setAnalyzing(false);
+    setSubmitting(false);
 
     if (res.ok) {
-      setExpandedId(data.id);
+      handleCancelCrop();
       loadData();
+      alert(`已收录 ${data.count} 道错题`);
     } else {
       alert(data.error || '收录失败');
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除这道错题吗？')) return;
+    if (!confirm('确定删除？')) return;
     const token = await getToken();
-    const res = await fetch(`/api/wrong-questions/${id}`, {
+    await fetch(`/api/wrong-questions/${id}`, {
       method: 'DELETE',
       headers: { 'x-session': token },
     });
-    if (res.ok) {
-      if (expandedId === id) setExpandedId(null);
-      loadData();
-    } else {
-      const data = await res.json();
-      alert(data.error || '删除失败');
-    }
+    setSelectedItemId(null);
+    loadData();
   };
 
-  const handleToggleMastered = async (item: WrongQuestionItem) => {
+  const handleMastery = async (id: number, level: number) => {
     const token = await getToken();
-    await fetch(`/api/wrong-questions/${item.id}`, {
+    await fetch(`/api/wrong-questions/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'x-session': token },
-      body: JSON.stringify({ mastered: !item.mastered }),
+      body: JSON.stringify({ mastery_level: level }),
     });
     loadData();
   };
 
-  const loadPractice = async (wrongQuestionId: number) => {
-    const token = await getToken();
-    const res = await fetch(`/api/wrong-questions/${wrongQuestionId}/practice`, {
-      headers: { 'x-session': token },
+  const toggleSelect = (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
     });
-    if (res.ok) {
-      const data = await res.json();
-      setPracticeMap((prev) => ({ ...prev, [wrongQuestionId]: data }));
-    }
   };
 
-  const handleExpand = async (id: number) => {
-    if (expandedId === id) {
-      setExpandedId(null);
+  const handlePrintSheet = async () => {
+    if (selectedIds.size === 0) {
+      alert('请先勾选错题');
       return;
     }
-    setExpandedId(id);
-    if (!practiceMap[id]) {
-      await loadPractice(id);
-    }
-  };
-
-  const handleGeneratePractice = async (wrongQuestionId: number) => {
-    setGeneratingId(wrongQuestionId);
+    setPrinting(true);
     const token = await getToken();
-    const res = await fetch(`/api/wrong-questions/${wrongQuestionId}/practice`, {
+    const res = await fetch('/api/wrong-questions/print', {
       method: 'POST',
-      headers: { 'x-session': token },
+      headers: { 'Content-Type': 'application/json', 'x-session': token },
+      body: JSON.stringify({ wrong_question_ids: Array.from(selectedIds) }),
     });
-    setGeneratingId(null);
+    const data = await res.json();
+    setPrinting(false);
 
     if (res.ok) {
-      const data = await res.json();
-      setPracticeMap((prev) => ({
-        ...prev,
-        [wrongQuestionId]: [...(prev[wrongQuestionId] ?? []), ...data],
-      }));
+      window.open(data.sheet_url, '_blank');
+      setSelectedIds(new Set());
       loadData();
     } else {
-      const data = await res.json();
       alert(data.error || '生成失败');
     }
   };
-
-  const handleSubmitAnswer = async (wrongQuestionId: number, practiceId: number) => {
-    const answer = answerInputs[practiceId]?.trim();
-    if (!answer) return;
-
-    setSubmittingId(practiceId);
-    const token = await getToken();
-    const res = await fetch(
-      `/api/wrong-questions/${wrongQuestionId}/practice/${practiceId}`,
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-session': token },
-        body: JSON.stringify({ student_answer: answer }),
-      },
-    );
-    const data = await res.json();
-    setSubmittingId(null);
-
-    if (res.ok) {
-      setPracticeMap((prev) => ({
-        ...prev,
-        [wrongQuestionId]: (prev[wrongQuestionId] ?? []).map((p) =>
-          p.id === practiceId ? data.practice : p,
-        ),
-      }));
-      if (!data.is_correct) {
-        alert(`答错了～\n正确答案：${data.correct_answer}\n\n${data.explanation || ''}`);
-      }
-    } else {
-      alert(data.error || '提交失败');
-    }
-  };
-
-  const getStudentName = (id: string) =>
-    students.find((s) => s.id === id)?.name ?? '学生';
 
   const parseKnowledgePoints = (raw: string | null): string[] => {
     if (!raw) return [];
@@ -231,14 +228,8 @@ export function WrongQuestionsPanel({ role, familyMembers }: WrongQuestionsPanel
     }
   };
 
-  const parseOptions = (raw: string | null): string[] => {
-    if (!raw) return [];
-    try {
-      return JSON.parse(raw) as string[];
-    } catch {
-      return [];
-    }
-  };
+  const getStudentName = (id: string) => students.find((s) => s.id === id)?.name ?? '学生';
+  const selectedItem = items.find((i) => i.id === selectedItemId);
 
   if (loading) {
     return (
@@ -248,285 +239,192 @@ export function WrongQuestionsPanel({ role, familyMembers }: WrongQuestionsPanel
     );
   }
 
-  return (
-    <div className="space-y-4">
-      {!aiConfigured && (
-        <div className="sketchy-card p-4 bg-[#EF5350]/10 border-2 border-[#EF5350]/30">
-          <p className="text-sm text-[#5D4037]" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-            ⚠️ AI 未配置，无法拍照解析错题。请在服务端设置 AI_API_BASE_URL 和 AI_API_KEY。
-          </p>
-        </div>
-      )}
-
-      {role === 'student' && (
-        <div className="sketchy-card p-4 text-center">
-          <p className="text-sm text-[#8D6E63] mb-3" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-            拍一道错题，AI 帮你分析错因并收录
-          </p>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleCapture}
+  if (cropPreviewUrl) {
+    return (
+      <div className="pb-4">
+        {submitting ? (
+          <div className="flex flex-col items-center gap-3 py-16">
+            <Loader2 className="h-10 w-10 animate-spin text-[#7CB342]" />
+            <p className="text-[#8D6E63]">AI 正在解析选中的错题...</p>
+          </div>
+        ) : (
+          <ImageCropSelector
+            imageUrl={cropPreviewUrl}
+            onConfirm={handleConfirmCrop}
+            onCancel={handleCancelCrop}
+            confirmLabel="收录错题"
           />
-          <button
-            className="w-full py-3 crayon-button-orange text-[#5D4037] flex items-center justify-center gap-2 disabled:opacity-50"
-            onClick={() => inputRef.current?.click()}
-            disabled={analyzing || !aiConfigured}
-          >
-            {analyzing ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                AI 正在解析错题...
-              </>
-            ) : (
-              <>
-                <Camera className="w-5 h-5" />
-                拍照收录错题
-              </>
-            )}
-          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (selectedItem) {
+    const kps = parseKnowledgePoints(selectedItem.knowledge_points);
+    return (
+      <div className="space-y-4 pb-4">
+        <img
+          src={selectedItem.image_url}
+          alt=""
+          className="w-full rounded-lg border-2 border-[#D7CCC8]"
+        />
+        <div className="sketchy-card p-4">
+          <div className="mb-2 flex flex-wrap gap-2">
+            <span className="rounded bg-[#F5E6D3] px-2 py-0.5 text-xs">{selectedItem.subject}</span>
+            <span className="text-xs text-[#FFB74D]">
+              {MASTERY_LABELS[selectedItem.mastery_level ?? 0]}
+            </span>
+          </div>
+          <p className="text-[#5D4037]" style={{ fontFamily: "'Patrick Hand', cursive" }}>
+            {selectedItem.question_text || '（无文字描述）'}
+          </p>
+        </div>
+
+        {selectedItem.student_answer && (
+          <div className="sketchy-card p-4 text-sm">
+            <p className="mb-1 text-xs text-[#EF5350]">学生答案</p>
+            <p>{selectedItem.student_answer}</p>
+          </div>
+        )}
+        {selectedItem.correct_answer && (
+          <div className="sketchy-card p-4 text-sm">
+            <p className="mb-1 text-xs text-[#7CB342]">正确答案</p>
+            <p>{selectedItem.correct_answer}</p>
+          </div>
+        )}
+        {selectedItem.solution_steps && (
+          <div className="sketchy-card bg-[#7CB342]/10 p-4 text-sm">
+            <p className="mb-1 text-xs text-[#7CB342]">解析过程</p>
+            <p className="whitespace-pre-wrap">{selectedItem.solution_steps}</p>
+          </div>
+        )}
+        {selectedItem.error_analysis && (
+          <div className="sketchy-card bg-[#FFB74D]/10 p-4 text-sm">
+            <p className="mb-1 text-xs text-[#FFB74D]">错因分析</p>
+            <p>{selectedItem.error_analysis}</p>
+          </div>
+        )}
+        {kps.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {kps.map((kp) => (
+              <span key={kp} className="rounded bg-[#7CB342]/20 px-2 py-0.5 text-xs">
+                {kp}
+              </span>
+            ))}
+          </div>
+        )}
+        <div>
+          <p className="mb-2 text-xs text-[#8D6E63]">掌握程度</p>
+          <div className="flex flex-wrap gap-2">
+            {MASTERY_LABELS.map((label, level) => (
+              <button
+                key={label}
+                type="button"
+                className={`rounded border px-2 py-1 text-xs ${
+                  (selectedItem.mastery_level ?? 0) === level
+                    ? 'border-[#7CB342] bg-[#7CB342]/20'
+                    : 'border-[#D7CCC8]'
+                }`}
+                onClick={() => handleMastery(selectedItem.id, level)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-[#EF5350]/40 py-2.5 text-sm text-[#EF5350]"
+          onClick={() => handleDelete(selectedItem.id)}
+        >
+          <Trash2 className="h-4 w-4" />
+          删除错题
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 pb-4">
+      {!aiConfigured && (
+        <div className="sketchy-card bg-[#EF5350]/10 p-4 text-sm text-[#5D4037]">
+          ⚠️ AI 未配置，请设置 DASHSCOPE_API_KEY
         </div>
       )}
 
-      {role === 'parent' && students.length > 1 && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            className={`px-3 py-2 rounded-lg border-2 text-sm ${
-              filterStudentId === 'all'
-                ? 'bg-[#7CB342]/20 border-[#7CB342]'
-                : 'border-[#D7CCC8]'
-            }`}
-            onClick={() => setFilterStudentId('all')}
-          >
-            全部
-          </button>
-          {students.map((s) => (
-            <button
-              key={s.id}
-              className={`px-3 py-2 rounded-lg border-2 text-sm ${
-                filterStudentId === s.id
-                  ? 'bg-[#FFB74D]/20 border-[#FFB74D]'
-                  : 'border-[#D7CCC8]'
-              }`}
-              onClick={() => setFilterStudentId(s.id)}
-            >
-              {s.name}
-            </button>
-          ))}
+      {role === 'parent' && (
+        <div className="sketchy-card p-4">
+          <StudentPicker
+            students={students}
+            value={selectedStudentId}
+            onChange={setSelectedStudentId}
+            label="查看/收录哪位孩子的错题"
+          />
         </div>
+      )}
+
+      <p className="text-center text-sm text-[#8D6E63]" style={{ fontFamily: "'Patrick Hand', cursive" }}>
+        点击下方 + 拍照框选错题
+      </p>
+
+      {items.length > 0 && (
+        <button
+          type="button"
+          className="flex w-full items-center justify-center gap-2 py-2 crayon-button-orange text-[#5D4037] disabled:opacity-50"
+          onClick={handlePrintSheet}
+          disabled={printing || selectedIds.size === 0}
+        >
+          {printing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+          生成 A4 练习卷 ({selectedIds.size} 道已选)
+        </button>
       )}
 
       {items.length === 0 ? (
         <div className="sketchy-card p-8 text-center text-[#8D6E63]">
-          {role === 'student' ? '📝 还没有错题，拍一张开始收录吧！' : '📚 孩子还没有收录错题'}
+          {role === 'parent' && !selectedStudentId ? '请先选择学生' : '还没有错题，框选添加吧'}
         </div>
       ) : (
-        items.map((item, index) => {
-          const expanded = expandedId === item.id;
-          const practices = practiceMap[item.id] ?? [];
-          const kps = parseKnowledgePoints(item.knowledge_points);
-
+        items.map((item) => {
+          const selected = selectedIds.has(item.id);
           return (
-            <div
-              key={item.id}
-              className={`sketchy-card p-4 sketchy-enter ${item.mastered ? 'bg-[#7CB342]/10' : ''}`}
-              style={{ transform: `rotate(${index % 2 === 0 ? -1 : 1}deg)` }}
-            >
-              <div className="flex gap-3">
+            <div key={item.id} className="sketchy-card flex items-center gap-3 p-3">
+              <button
+                type="button"
+                className="shrink-0"
+                onClick={(e) => toggleSelect(item.id, e)}
+              >
+                {selected ? (
+                  <CheckSquare className="h-5 w-5 text-[#7CB342]" />
+                ) : (
+                  <Square className="h-5 w-5 text-[#8D6E63]" />
+                )}
+              </button>
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                onClick={() => setSelectedItemId(item.id)}
+              >
                 <img
                   src={item.image_url}
-                  alt="错题"
-                  className="w-20 h-20 object-cover rounded-lg border-2 border-[#D7CCC8] shrink-0"
+                  alt=""
+                  className="h-16 w-16 shrink-0 rounded-lg border-2 border-[#D7CCC8] object-cover"
                 />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="text-xs bg-[#F5E6D3] px-2 py-0.5 rounded">{item.subject}</span>
-                    {item.mastered && (
-                      <span className="text-xs text-[#7CB342]">✅ 已掌握</span>
-                    )}
-                    {role === 'parent' && (
-                      <span className="text-xs text-[#8D6E63]">{getStudentName(item.student_id)}</span>
-                    )}
-                    <span className="text-xs text-[#8D6E63]">复习 {item.review_count} 次</span>
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex flex-wrap gap-1">
+                    <span className="rounded bg-[#F5E6D3] px-2 py-0.5 text-xs">{item.subject}</span>
+                    <span className="text-xs text-[#FFB74D]">
+                      {MASTERY_LABELS[item.mastery_level ?? 0]}
+                    </span>
                   </div>
                   <p
-                    className="text-[#5D4037] line-clamp-2"
+                    className="line-clamp-2 text-sm text-[#5D4037]"
                     style={{ fontFamily: "'Patrick Hand', cursive" }}
                   >
-                    {item.question_text || '（AI 解析中...）'}
+                    {item.question_text || '（无文字描述）'}
                   </p>
                 </div>
-                <div className="flex flex-col gap-1 shrink-0">
-                  <button
-                    className="p-1.5 text-[#8D6E63]"
-                    onClick={() => handleExpand(item.id)}
-                  >
-                    {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  </button>
-                  <button
-                    className="p-1.5 text-[#EF5350]"
-                    onClick={() => handleDelete(item.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {expanded && (
-                <div className="mt-4 pt-4 border-t-2 border-dashed border-[#D7CCC8] space-y-3">
-                  {item.student_answer && (
-                    <div>
-                      <p className="text-xs text-[#EF5350] mb-1">你的答案</p>
-                      <p className="text-sm text-[#5D4037]">{item.student_answer}</p>
-                    </div>
-                  )}
-                  {item.correct_answer && (
-                    <div>
-                      <p className="text-xs text-[#7CB342] mb-1">正确答案</p>
-                      <p className="text-sm text-[#5D4037]">{item.correct_answer}</p>
-                    </div>
-                  )}
-                  {item.error_analysis && (
-                    <div className="bg-[#FFB74D]/10 p-3 rounded-lg">
-                      <p className="text-xs text-[#FFB74D] mb-1 flex items-center gap-1">
-                        <BookOpen className="w-3 h-3" /> 错因分析
-                      </p>
-                      <p className="text-sm text-[#5D4037]">{item.error_analysis}</p>
-                    </div>
-                  )}
-                  {kps.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {kps.map((kp) => (
-                        <span key={kp} className="text-xs px-2 py-0.5 bg-[#7CB342]/20 rounded">
-                          {kp}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="flex gap-2 flex-wrap">
-                    {role === 'student' && (
-                      <>
-                        <button
-                          className="px-3 py-2 crayon-button text-[#FFFDE7] text-sm flex items-center gap-1 disabled:opacity-50"
-                          onClick={() => handleGeneratePractice(item.id)}
-                          disabled={generatingId === item.id || !aiConfigured}
-                        >
-                          {generatingId === item.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Sparkles className="w-4 h-4" />
-                          )}
-                          生成类似题
-                        </button>
-                        <button
-                          className={`px-3 py-2 text-sm border-2 rounded-lg ${
-                            item.mastered
-                              ? 'border-[#7CB342] text-[#7CB342]'
-                              : 'border-[#D7CCC8] text-[#8D6E63]'
-                          }`}
-                          onClick={() => handleToggleMastered(item)}
-                        >
-                          {item.mastered ? '取消掌握' : '标记已掌握'}
-                        </button>
-                      </>
-                    )}
-                  </div>
-
-                  {practices.length > 0 && (
-                    <div className="space-y-3 mt-2">
-                      <p className="text-sm text-[#5D4037]" style={{ fontFamily: "'Patrick Hand', cursive" }}>
-                        ✏️ 巩固练习
-                      </p>
-                      {practices.map((p, pi) => {
-                        const options = parseOptions(p.options);
-                        const answered = p.is_correct !== null;
-
-                        return (
-                          <div
-                            key={p.id}
-                            className={`p-3 rounded-lg border-2 ${
-                              answered
-                                ? p.is_correct
-                                  ? 'border-[#7CB342] bg-[#7CB342]/10'
-                                  : 'border-[#EF5350] bg-[#EF5350]/10'
-                                : 'border-[#D7CCC8] bg-[#FFFDE7]'
-                            }`}
-                          >
-                            <p className="text-sm text-[#5D4037] mb-2">
-                              {pi + 1}. {p.question_text}
-                            </p>
-                            {options.length > 0 && (
-                              <div className="space-y-1 mb-2">
-                                {options.map((opt) => (
-                                  <button
-                                    key={opt}
-                                    className={`block w-full text-left text-sm px-2 py-1 rounded ${
-                                      answerInputs[p.id] === opt
-                                        ? 'bg-[#FFB74D]/30'
-                                        : 'hover:bg-[#F5E6D3]'
-                                    }`}
-                                    onClick={() =>
-                                      !answered &&
-                                      setAnswerInputs((prev) => ({ ...prev, [p.id]: opt }))
-                                    }
-                                    disabled={answered || role !== 'student'}
-                                  >
-                                    {opt}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                            {role === 'student' && !answered && (
-                              <div className="flex gap-2">
-                                {options.length === 0 && (
-                                  <input
-                                    placeholder="写下你的答案..."
-                                    value={answerInputs[p.id] ?? ''}
-                                    onChange={(e) =>
-                                      setAnswerInputs((prev) => ({
-                                        ...prev,
-                                        [p.id]: e.target.value,
-                                      }))
-                                    }
-                                    className="flex-1 py-1 px-2 pencil-input text-sm"
-                                  />
-                                )}
-                                <button
-                                  className="px-3 py-1 crayon-button text-[#FFFDE7] text-sm disabled:opacity-50"
-                                  onClick={() => handleSubmitAnswer(item.id, p.id)}
-                                  disabled={submittingId === p.id || !answerInputs[p.id]?.trim()}
-                                >
-                                  {submittingId === p.id ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    '提交'
-                                  )}
-                                </button>
-                              </div>
-                            )}
-                            {answered && (
-                              <div className="flex items-center gap-2 text-sm mt-1">
-                                {p.is_correct ? (
-                                  <CheckCircle2 className="w-4 h-4 text-[#7CB342]" />
-                                ) : (
-                                  <XCircle className="w-4 h-4 text-[#EF5350]" />
-                                )}
-                                <span className={p.is_correct ? 'text-[#7CB342]' : 'text-[#EF5350]'}>
-                                  {p.is_correct ? '答对了！' : `答错了，正确：${p.answer}`}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
+                <ChevronRight className="h-5 w-5 shrink-0 text-[#8D6E63]" />
+              </button>
             </div>
           );
         })

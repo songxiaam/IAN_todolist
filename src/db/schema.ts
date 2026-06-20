@@ -171,11 +171,17 @@ export const wrongQuestions = pgTable(
       .references(() => families.id, { onDelete: 'cascade' }),
     subject: varchar('subject', { length: 50 }).notNull().default('其他'),
     image_path: text('image_path').notNull(),
+    original_image_path: text('original_image_path'),
+    crop_bbox: text('crop_bbox'),
+    source_type: varchar('source_type', { length: 20 }).notNull().default('crop'),
+    source_grading_question_id: integer('source_grading_question_id'),
     question_text: text('question_text'),
     student_answer: text('student_answer'),
     correct_answer: text('correct_answer'),
+    solution_steps: text('solution_steps'),
     error_analysis: text('error_analysis'),
     knowledge_points: text('knowledge_points'),
+    mastery_level: integer('mastery_level').notNull().default(0),
     mastered: boolean('mastered').notNull().default(false),
     review_count: integer('review_count').notNull().default(0),
     last_reviewed_at: timestamp('last_reviewed_at', { withTimezone: true }),
@@ -209,4 +215,50 @@ export const practiceQuestions = pgTable(
       .notNull(),
   },
   (table) => [index('practice_questions_wrong_question_id_idx').on(table.wrong_question_id)],
+);
+
+export const homeworkGradings = pgTable(
+  'homework_gradings',
+  {
+    id: serial().primaryKey(),
+    student_id: uuid('student_id').notNull(),
+    family_id: uuid('family_id')
+      .notNull()
+      .references(() => families.id, { onDelete: 'cascade' }),
+    subject: varchar('subject', { length: 50 }).notNull().default('其他'),
+    original_image_path: text('original_image_path').notNull(),
+    question_count: integer('question_count').notNull().default(0),
+    correct_count: integer('correct_count').notNull().default(0),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index('homework_gradings_student_id_idx').on(table.student_id),
+    index('homework_gradings_family_id_idx').on(table.family_id),
+  ],
+);
+
+export const gradingQuestions = pgTable(
+  'grading_questions',
+  {
+    id: serial().primaryKey(),
+    grading_id: integer('grading_id')
+      .notNull()
+      .references(() => homeworkGradings.id, { onDelete: 'cascade' }),
+    question_index: integer('question_index').notNull(),
+    crop_image_path: text('crop_image_path').notNull(),
+    crop_bbox: text('crop_bbox').notNull(),
+    question_text: text('question_text'),
+    student_answer: text('student_answer'),
+    correct_answer: text('correct_answer'),
+    solution_steps: text('solution_steps'),
+    is_correct: boolean('is_correct'),
+    feedback: text('feedback'),
+    wrong_question_id: integer('wrong_question_id'),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index('grading_questions_grading_id_idx').on(table.grading_id)],
 );

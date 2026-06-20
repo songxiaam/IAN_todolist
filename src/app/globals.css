@@ -393,3 +393,13 @@
 .animate-celebration-ring {
   animation: celebration-ring 1s ease-out forwards;
 }
+
+/* 移动端底部导航 */
+.mobile-tab-bar {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
