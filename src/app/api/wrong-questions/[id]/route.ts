@@ -2,6 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/supabase/server';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getAuthProfile } from '@/lib/api-auth';
+import { isAiConfigured } from '@/lib/ai';
+import {
+  reanalyzeWrongQuestionFromBbox,
+  WRONG_QUESTIONS_BUCKET,
+} from '@/lib/wrong-question-service';
+import {
+  serializeWrongQuestion,
+  countSharedOriginalSources,
+  getOriginalImageBucket,
+} from '@/lib/wrong-question-serialize';
+import { normalizeImageBuffer } from '@/lib/image-crop';
+import type { NormalizedBBox } from '@/lib/image-crop-types';
 
 const BUCKET = 'wrong-questions';
 
@@ -19,6 +31,21 @@ async function getWrongQuestion(
 
   if (error || !data) return null;
   return data;
+}
+
+async function downloadOriginalBuffer(
+  admin: ReturnType<typeof getSupabaseAdminClient>,
+  sourceType: string | null,
+  originalPath: string,
+): Promise<Buffer | null> {
+  const bucket = getOriginalImageBucket(sourceType);
+  const { data, error } = await admin.storage.from(bucket).download(originalPath);
+  if (error || !data) return null;
+  const raw = Buffer.from(await data.arrayBuffer());
+  if (bucket === WRONG_QUESTIONS_BUCKET) {
+    return normalizeImageBuffer(raw);
+  }
+  return raw;
 }
 
 export async function GET(
@@ -43,9 +70,7 @@ export async function GET(
   }
 
   const admin = getSupabaseAdminClient();
-  const { data: urlData } = admin.storage.from(BUCKET).getPublicUrl(record.image_path);
-
-  return NextResponse.json({ ...record, image_url: urlData.publicUrl });
+  return NextResponse.json(serializeWrongQuestion(record, admin));
 }
 
 export async function PATCH(
@@ -58,9 +83,10 @@ export async function PATCH(
   }
 
   const { id } = await params;
+  const recordId = parseInt(id, 10);
   const body = await req.json();
   const client = getSupabaseClient(auth.session);
-  const record = await getWrongQuestion(client, parseInt(id, 10), auth.profile.family_id);
+  const record = await getWrongQuestion(client, recordId, auth.profile.family_id);
 
   if (!record) {
     return NextResponse.json({ error: '错题不存在' }, { status: 404 });
@@ -71,6 +97,7 @@ export async function PATCH(
   }
 
   const updates: Record<string, unknown> = {};
+
   if (typeof body.mastered === 'boolean') {
     updates.mastered = body.mastered;
   }
@@ -82,6 +109,32 @@ export async function PATCH(
   if (body.action === 'review') {
     updates.review_count = (record.review_count ?? 0) + 1;
     updates.last_reviewed_at = new Date().toISOString();
+  }
+
+  const bbox = body.bbox as NormalizedBBox | undefined;
+  if (bbox && typeof bbox.x === 'number') {
+    updates.crop_bbox = JSON.stringify(bbox);
+
+    if (body.reanalyze !== false && isAiConfigured() && record.original_image_path) {
+      const admin = getSupabaseAdminClient();
+      const sourceBuffer = await downloadOriginalBuffer(
+        admin,
+        record.source_type,
+        record.original_image_path,
+      );
+      if (sourceBuffer) {
+        try {
+          const analyzed = await reanalyzeWrongQuestionFromBbox(
+            sourceBuffer,
+            bbox,
+            record.subject,
+          );
+          Object.assign(updates, analyzed);
+        } catch {
+          /* 框选已保存，解析失败不阻断 */
+        }
+      }
+    }
   }
 
   if (Object.keys(updates).length === 0) {
@@ -99,7 +152,8 @@ export async function PATCH(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  const admin = getSupabaseAdminClient();
+  return NextResponse.json(serializeWrongQuestion(data, admin));
 }
 
 export async function DELETE(
@@ -124,7 +178,18 @@ export async function DELETE(
   }
 
   const admin = getSupabaseAdminClient();
-  await admin.storage.from(BUCKET).remove([record.image_path]);
+
+  if (record.image_path) {
+    await admin.storage.from(BUCKET).remove([record.image_path]);
+  }
+
+  if (
+    record.original_image_path &&
+    record.source_type === 'crop' &&
+    (await countSharedOriginalSources(client, record.original_image_path, record.id)) === 0
+  ) {
+    await admin.storage.from(WRONG_QUESTIONS_BUCKET).remove([record.original_image_path]);
+  }
 
   const { error } = await client.from('wrong_questions').delete().eq('id', record.id);
   if (error) {

@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/supabase/server';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getAuthProfile } from '@/lib/api-auth';
-import { gradeHomeworkImage, isAiConfigured } from '@/lib/ai';
+import { gradeHomeworkImage, gradeHomeworkFromRegions, isAiConfigured } from '@/lib/ai';
 import { cropImageBuffer } from '@/lib/image-crop';
+import type { NormalizedBBox } from '@/lib/image-crop';
 import { readStudentIdFromForm, readStudentIdFromQuery, resolveTargetStudentId } from '@/lib/student-target';
 
 const BUCKET = 'homework-grading';
@@ -72,9 +73,24 @@ export async function POST(req: NextRequest) {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
+  const regionsRaw = formData.get('regions');
+  let customRegions: NormalizedBBox[] | null = null;
+  if (regionsRaw) {
+    try {
+      customRegions = JSON.parse(String(regionsRaw)) as NormalizedBBox[];
+      if (!Array.isArray(customRegions) || customRegions.length === 0) {
+        return NextResponse.json({ error: '请框选至少一道题' }, { status: 400 });
+      }
+    } catch {
+      return NextResponse.json({ error: '选区格式无效' }, { status: 400 });
+    }
+  }
+
   let gradeResult;
   try {
-    gradeResult = await gradeHomeworkImage(buffer, file.type);
+    gradeResult = customRegions
+      ? await gradeHomeworkFromRegions(buffer, file.type, customRegions)
+      : await gradeHomeworkImage(buffer, file.type);
   } catch (error) {
     const message = error instanceof Error ? error.message : '批改失败';
     return NextResponse.json({ error: message }, { status: 502 });

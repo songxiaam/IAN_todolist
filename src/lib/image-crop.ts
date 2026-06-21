@@ -1,11 +1,8 @@
 import { getSharp } from '@/lib/sharp-loader';
+import type { NormalizedBBox } from '@/lib/image-crop-types';
 
-export interface NormalizedBBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
+export type { NormalizedBBox } from '@/lib/image-crop-types';
+export { DEFAULT_MANUAL_BBOX } from '@/lib/image-crop-types';
 
 function clampBBox(bbox: NormalizedBBox): NormalizedBBox {
   const x = Math.max(0, Math.min(1, bbox.x));
@@ -52,4 +49,34 @@ async function cropImageBuffer(
     .toBuffer();
 }
 
-export { clampBBox, cropImageBuffer, bboxToPixels, getImageSize };
+/** 校正 EXIF 方向，返回与浏览器显示一致的像素数据 */
+async function normalizeImageBuffer(sourceBuffer: Buffer): Promise<Buffer> {
+  const sharp = await getSharp();
+  return sharp(sourceBuffer).rotate().jpeg({ quality: 92 }).toBuffer();
+}
+
+/** 自动旋转、限尺寸，供视觉模型识别（归一化坐标仍适用于原图比例） */
+async function prepareVisionBuffer(
+  sourceBuffer: Buffer,
+): Promise<{ buffer: Buffer; mimeType: string; width: number; height: number }> {
+  const sharp = await getSharp();
+  const maxDim = 2048;
+  const normalized = await sharp(sourceBuffer).rotate().jpeg({ quality: 92 }).toBuffer();
+  let pipeline = sharp(normalized);
+  const meta = await pipeline.metadata();
+  const w = meta.width ?? 1;
+  const h = meta.height ?? 1;
+  if (w > maxDim || h > maxDim) {
+    pipeline = pipeline.resize({ width: maxDim, height: maxDim, fit: 'inside', withoutEnlargement: true });
+  }
+  const buffer = await pipeline.jpeg({ quality: 92 }).toBuffer();
+  const outMeta = await sharp(buffer).metadata();
+  return {
+    buffer,
+    mimeType: 'image/jpeg',
+    width: outMeta.width ?? w,
+    height: outMeta.height ?? h,
+  };
+}
+
+export { clampBBox, cropImageBuffer, bboxToPixels, getImageSize, prepareVisionBuffer, normalizeImageBuffer };

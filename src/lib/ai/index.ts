@@ -4,7 +4,9 @@ export {
   detectSubjectFromImage,
   generateSimilarQuestions,
 } from './analyze';
-export { gradeHomeworkImage } from './grade-homework';
+export { gradeHomeworkImage, gradeHomeworkFromRegions, gradeQuestionCrop } from './grade-homework';
+export { detectQuestionRegions, normalizeRawBBox } from './detect-regions';
+export { DEFAULT_MANUAL_BBOX } from '@/lib/image-crop-types';
 export {
   getAiRoutingSnapshot,
   getConfigPath,

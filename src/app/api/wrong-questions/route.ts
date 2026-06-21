@@ -4,7 +4,9 @@ import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getAuthProfile } from '@/lib/api-auth';
 import { isAiConfigured } from '@/lib/ai';
 import { buildWrongQuestionRecord, WRONG_QUESTIONS_BUCKET } from '@/lib/wrong-question-service';
-import type { NormalizedBBox } from '@/lib/image-crop';
+import { serializeWrongQuestion } from '@/lib/wrong-question-serialize';
+import { normalizeImageBuffer } from '@/lib/image-crop';
+import type { NormalizedBBox } from '@/lib/image-crop-types';
 import { readStudentIdFromForm, readStudentIdFromQuery, resolveTargetStudentId } from '@/lib/student-target';
 
 export async function GET(req: NextRequest) {
@@ -34,21 +36,12 @@ export async function GET(req: NextRequest) {
   }
 
   const admin = getSupabaseAdminClient();
-  const items = (data ?? []).map((item) => {
-    const { data: urlData } = admin.storage.from(WRONG_QUESTIONS_BUCKET).getPublicUrl(item.image_path);
-    let original_image_url: string | null = null;
-    if (item.original_image_path) {
-      original_image_url = admin.storage
-        .from(WRONG_QUESTIONS_BUCKET)
-        .getPublicUrl(item.original_image_path).data.publicUrl;
-    }
-    return { ...item, image_url: urlData.publicUrl, original_image_url };
-  });
+  const items = (data ?? []).map((item) => serializeWrongQuestion(item, admin));
 
   return NextResponse.json({ items, aiConfigured: isAiConfigured() });
 }
 
-/** 框选错题：上传原图 + 多个选区 */
+/** 框选错题：上传原图 + 多个选区（只存原图与坐标） */
 export async function POST(req: NextRequest) {
   const auth = await getAuthProfile(req);
   if ('error' in auth) {
@@ -83,14 +76,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '请框选至少一道错题' }, { status: 400 });
   }
 
-  const sourceBuffer = Buffer.from(await file.arrayBuffer());
+  const sourceBuffer = await normalizeImageBuffer(Buffer.from(await file.arrayBuffer()));
   const admin = getSupabaseAdminClient();
-  const ext = file.name.split('.').pop() || 'jpg';
-  const sourcePath = `${auth.profile.family_id}/${target.studentId}/sources/${Date.now()}-full.${ext}`;
+  const sourcePath = `${auth.profile.family_id}/${target.studentId}/sources/${Date.now()}-full.jpg`;
 
   const { error: uploadError } = await admin.storage
     .from(WRONG_QUESTIONS_BUCKET)
-    .upload(sourcePath, sourceBuffer, { contentType: file.type, upsert: false });
+    .upload(sourcePath, sourceBuffer, { contentType: 'image/jpeg', upsert: false });
 
   if (uploadError) {
     return NextResponse.json({ error: uploadError.message }, { status: 500 });
@@ -104,7 +96,7 @@ export async function POST(req: NextRequest) {
       studentId: target.studentId,
       familyId: auth.profile.family_id,
       sourceBuffer,
-      sourceMime: file.type,
+      sourceMime: 'image/jpeg',
       sourcePath,
       bbox,
       sourceType: 'crop',
@@ -114,8 +106,7 @@ export async function POST(req: NextRequest) {
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    const image_url = admin.storage.from(WRONG_QUESTIONS_BUCKET).getPublicUrl(data.image_path).data.publicUrl;
-    created.push({ ...data, image_url });
+    created.push(serializeWrongQuestion(data, admin));
   }
 
   return NextResponse.json({ items: created, count: created.length });

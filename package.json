@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
-    "start": "next start",
+    "start": "pnpm next start",
     "preinstall": "npx only-allow pnpm",
     "lint": "eslint",
     "lint:build": "eslint . --quiet",
@@ -14,7 +14,12 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "deploy:build": "bash scripts/deploy/build-release.sh",
+    "deploy:push": "bash scripts/deploy/push.sh",
+    "deploy:restart": "bash scripts/deploy/restart-remote.sh",
+    "deploy:setup": "bash scripts/deploy/server-setup.sh",
+    "deploy:all": "bash scripts/deploy/deploy.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

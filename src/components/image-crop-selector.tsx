@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import type { NormalizedBBox } from '@/lib/image-crop';
+import type { NormalizedBBox } from '@/lib/image-crop-types';
 
 interface ImageCropSelectorProps {
   imageUrl: string;

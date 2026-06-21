@@ -3,6 +3,7 @@ import { getSupabaseClient } from '@/lib/supabase/server';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getAuthProfile } from '@/lib/api-auth';
 import { buildWrongQuestionRecord } from '@/lib/wrong-question-service';
+import { serializeWrongQuestion } from '@/lib/wrong-question-serialize';
 
 const GRADING_BUCKET = 'homework-grading';
 
@@ -97,7 +98,5 @@ export async function POST(
     .update({ wrong_question_id: wrongQ.id })
     .eq('id', question.id);
 
-  const cropUrl = admin.storage.from('wrong-questions').getPublicUrl(wrongQ.image_path).data.publicUrl;
-
-  return NextResponse.json({ ...wrongQ, image_url: cropUrl });
+  return NextResponse.json(serializeWrongQuestion(wrongQ, admin));
 }

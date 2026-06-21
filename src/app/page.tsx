@@ -761,6 +761,7 @@ export default function HomePage() {
   const focusTitle = activeFocusHomework?.title ?? storedFocusTimer?.title ?? '作业';
   const focusSubject = activeFocusHomework?.subject ?? storedFocusTimer?.subject ?? '';
   const isStudentFocusMode = profile.role === 'student' && currentTimer !== null && !showCompleteDialog;
+  const showTabBar = !isStudentFocusMode && !navOverride && !showCamera;
 
   return (
     <div className="min-h-dvh paper-bg flex flex-col">
@@ -796,7 +797,7 @@ export default function HomePage() {
         />
       )}
 
-      <div className={`flex flex-1 flex-col ${isStudentFocusMode ? 'pointer-events-none select-none' : 'pb-[calc(5rem+env(safe-area-inset-bottom,0px))]'}`}>
+      <div className={`flex flex-1 flex-col ${isStudentFocusMode ? 'pointer-events-none select-none' : showTabBar ? 'pb-[calc(5rem+env(safe-area-inset-bottom,0px))]' : 'pb-[env(safe-area-inset-bottom,0px)]'}`}>
       <NavigationBar
         title={TAB_TITLES[activeTab]}
         subtitle={
@@ -1014,7 +1015,7 @@ export default function HomePage() {
 
       </div>
 
-      {!isStudentFocusMode && (
+      {showTabBar && (
         <MobileTabBar
           activeTab={activeTab}
           onTabChange={handleTabChange}

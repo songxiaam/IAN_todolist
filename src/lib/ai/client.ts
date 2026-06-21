@@ -4,11 +4,12 @@ async function chatCompletion(
   resolved: ResolvedModel,
   messages: { role: string; content: unknown }[],
   jsonMode = false,
+  temperature = 0.3,
 ): Promise<string> {
   const body: Record<string, unknown> = {
     model: resolved.model,
     messages,
-    temperature: 0.3,
+    temperature,
   };
   if (jsonMode) {
     body.response_format = { type: 'json_object' };

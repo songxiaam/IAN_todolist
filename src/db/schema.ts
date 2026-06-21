@@ -170,7 +170,7 @@ export const wrongQuestions = pgTable(
       .notNull()
       .references(() => families.id, { onDelete: 'cascade' }),
     subject: varchar('subject', { length: 50 }).notNull().default('其他'),
-    image_path: text('image_path').notNull(),
+    image_path: text('image_path'),
     original_image_path: text('original_image_path'),
     crop_bbox: text('crop_bbox'),
     source_type: varchar('source_type', { length: 20 }).notNull().default('crop'),

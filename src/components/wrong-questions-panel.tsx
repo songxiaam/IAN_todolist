@@ -10,16 +10,24 @@ import {
   Square,
 } from 'lucide-react';
 import { getSupabaseBrowserClientWithRetry } from '@/lib/supabase-browser';
-import { ImageCropSelector } from '@/components/image-crop-selector';
+import { CropRegionEditor } from '@/components/crop-region-editor';
+import { CropRegionsOverview } from '@/components/crop-regions-overview';
+import { WrongQuestionCropImage } from '@/components/wrong-question-crop-image';
+import { WrongQuestionSourceViewer } from '@/components/wrong-question-source-viewer';
+import { useNormalizedImageUrl } from '@/hooks/use-normalized-image-url';
+import { useCropRegionsSession } from '@/hooks/use-crop-regions-session';
 import { StudentPicker, getDefaultStudentId } from '@/components/student-picker';
-import type { NormalizedBBox } from '@/lib/image-crop';
+import type { NormalizedBBox } from '@/lib/image-crop-types';
 import type { PendingCapture } from '@/components/camera-capture-overlay';
 import type { NavOverride } from '@/components/navigation-bar';
 
 interface WrongQuestionItem {
   id: number;
   subject: string;
-  image_url: string;
+  original_image_url: string | null;
+  crop_bbox: NormalizedBBox | null;
+  legacy_image_url?: string | null;
+  image_url?: string | null;
   question_text: string | null;
   student_answer: string | null;
   correct_answer: string | null;
@@ -33,6 +41,8 @@ interface WrongQuestionItem {
   student_id: string;
   source_type?: string;
 }
+
+type DetailView = 'info' | 'source' | 'editor';
 
 const MASTERY_LABELS = ['未掌握', '初步了解', '基本掌握', '完全掌握'];
 
@@ -57,39 +67,58 @@ export function WrongQuestionsPanel({
   const [loading, setLoading] = useState(true);
   const [aiConfigured, setAiConfigured] = useState(true);
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  const [detailView, setDetailView] = useState<DetailView>('info');
+  const [updatingBbox, setUpdatingBbox] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [cropPreviewUrl, setCropPreviewUrl] = useState<string | null>(null);
-  const [cropFile, setCropFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [printing, setPrinting] = useState(false);
+
+  const handleCropNavTitle = useCallback(
+    (title: string | null, onBack: (() => void) | null) => {
+      if (title && onBack) {
+        onNavOverride?.({ title, onBack });
+      }
+    },
+    [onNavOverride],
+  );
+
+  const crop = useCropRegionsSession({ onNavTitle: handleCropNavTitle });
+
+  const closeDetail = useCallback(() => {
+    setSelectedItemId(null);
+    setDetailView('info');
+  }, []);
+
+  useEffect(() => {
+    if (crop.active) return;
+
+    if (selectedItemId !== null) {
+      if (detailView === 'editor') {
+        onNavOverride?.({
+          title: '重新框选',
+          onBack: () => setDetailView('source'),
+        });
+      } else if (detailView === 'source') {
+        onNavOverride?.({
+          title: '原始试卷',
+          onBack: () => setDetailView('info'),
+        });
+      } else {
+        onNavOverride?.({
+          title: '错题详情',
+          onBack: closeDetail,
+        });
+      }
+    } else if (!crop.active) {
+      onNavOverride?.(null);
+    }
+  }, [selectedItemId, detailView, crop.active, onNavOverride, closeDetail]);
 
   useEffect(() => {
     if (role === 'parent' && students.length === 1 && !selectedStudentId) {
       setSelectedStudentId(students[0].id);
     }
   }, [role, students, selectedStudentId]);
-
-  const handleCancelCrop = useCallback(() => {
-    if (cropPreviewUrl) URL.revokeObjectURL(cropPreviewUrl);
-    setCropPreviewUrl(null);
-    setCropFile(null);
-  }, [cropPreviewUrl]);
-
-  useEffect(() => {
-    if (cropPreviewUrl) {
-      onNavOverride?.({
-        title: '框选错题',
-        onBack: handleCancelCrop,
-      });
-    } else if (selectedItemId !== null) {
-      onNavOverride?.({
-        title: '错题详情',
-        onBack: () => setSelectedItemId(null),
-      });
-    } else {
-      onNavOverride?.(null);
-    }
-  }, [cropPreviewUrl, selectedItemId, onNavOverride, handleCancelCrop]);
 
   const getToken = async () => {
     const supabase = await getSupabaseBrowserClientWithRetry();
@@ -119,6 +148,7 @@ export function WrongQuestionsPanel({
     setLoading(true);
     setSelectedIds(new Set());
     setSelectedItemId(null);
+    setDetailView('info');
     loadData();
   }, [loadData]);
 
@@ -131,18 +161,20 @@ export function WrongQuestionsPanel({
       onPendingCaptureConsumed?.();
       return;
     }
-    setCropFile(pendingCapture.file);
-    setCropPreviewUrl(URL.createObjectURL(pendingCapture.file));
+    void (async () => {
+      const token = await getToken();
+      await crop.startSession(pendingCapture.file, token);
+    })();
     onPendingCaptureConsumed?.();
   }, [pendingCapture, role, students.length, onPendingCaptureConsumed]);
 
-  const handleConfirmCrop = async (regions: NormalizedBBox[]) => {
-    if (!cropFile) return;
+  const handleConfirmCrop = async () => {
+    if (!crop.imageFile) return;
     setSubmitting(true);
     const token = await getToken();
     const formData = new FormData();
-    formData.append('image', cropFile);
-    formData.append('regions', JSON.stringify(regions));
+    formData.append('image', crop.imageFile);
+    formData.append('regions', JSON.stringify(crop.getRegionBboxes()));
     if (role === 'parent') {
       formData.append('student_id', selectedStudentId);
     }
@@ -156,7 +188,7 @@ export function WrongQuestionsPanel({
     setSubmitting(false);
 
     if (res.ok) {
-      handleCancelCrop();
+      crop.cancelSession();
       loadData();
       alert(`已收录 ${data.count} 道错题`);
     } else {
@@ -171,7 +203,7 @@ export function WrongQuestionsPanel({
       method: 'DELETE',
       headers: { 'x-session': token },
     });
-    setSelectedItemId(null);
+    closeDetail();
     loadData();
   };
 
@@ -183,6 +215,24 @@ export function WrongQuestionsPanel({
       body: JSON.stringify({ mastery_level: level }),
     });
     loadData();
+  };
+
+  const handleUpdateBbox = async (id: number, bbox: NormalizedBBox) => {
+    setUpdatingBbox(true);
+    const token = await getToken();
+    const res = await fetch(`/api/wrong-questions/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-session': token },
+      body: JSON.stringify({ bbox, reanalyze: true }),
+    });
+    setUpdatingBbox(false);
+    if (res.ok) {
+      await loadData();
+      setDetailView('info');
+    } else {
+      const data = await res.json();
+      alert(data.error || '更新失败');
+    }
   };
 
   const toggleSelect = (id: number, e: React.MouseEvent) => {
@@ -228,8 +278,9 @@ export function WrongQuestionsPanel({
     }
   };
 
-  const getStudentName = (id: string) => students.find((s) => s.id === id)?.name ?? '学生';
   const selectedItem = items.find((i) => i.id === selectedItemId);
+  const { displayUrl: normalizedOriginalUrl, loading: normalizingOriginal } =
+    useNormalizedImageUrl(selectedItem?.original_image_url);
 
   if (loading) {
     return (
@@ -239,35 +290,108 @@ export function WrongQuestionsPanel({
     );
   }
 
-  if (cropPreviewUrl) {
-    return (
-      <div className="pb-4">
-        {submitting ? (
-          <div className="flex flex-col items-center gap-3 py-16">
-            <Loader2 className="h-10 w-10 animate-spin text-[#7CB342]" />
-            <p className="text-[#8D6E63]">AI 正在解析选中的错题...</p>
-          </div>
-        ) : (
-          <ImageCropSelector
-            imageUrl={cropPreviewUrl}
-            onConfirm={handleConfirmCrop}
-            onCancel={handleCancelCrop}
-            confirmLabel="收录错题"
-          />
-        )}
-      </div>
-    );
+  if (crop.active) {
+    if (crop.detecting || submitting) {
+      return (
+        <div className="flex flex-col items-center gap-3 py-16">
+          <Loader2 className="h-10 w-10 animate-spin text-[#7CB342]" />
+          <p className="text-[#8D6E63]">
+            {crop.detecting ? 'AI 正在精确定位题目区域...' : 'AI 正在解析选中的错题...'}
+          </p>
+        </div>
+      );
+    }
+
+    if (crop.view === 'editor' && crop.imageUrl) {
+      const editorProps = crop.getEditorProps();
+      if (!editorProps) return null;
+      return (
+        <CropRegionEditor
+          imageUrl={crop.imageUrl}
+          initialBBox={editorProps.initialBBox}
+          regionLabel={editorProps.regionLabel}
+          isNew={editorProps.isNew}
+          onConfirm={crop.confirmEditor}
+          onDelete={editorProps.isNew ? undefined : crop.deleteFromEditor}
+          onCancel={crop.closeEditor}
+        />
+      );
+    }
+
+    if (crop.imageUrl) {
+      return (
+        <CropRegionsOverview
+          imageUrl={crop.imageUrl}
+          regions={crop.regions}
+          onEditRegion={crop.openEditor}
+          onAddRegion={() => crop.openEditor('new')}
+          onDeleteRegion={crop.deleteRegion}
+          onConfirm={handleConfirmCrop}
+          onCancel={crop.cancelSession}
+          confirmLabel="收录错题"
+          hint="AI 已自动框选题目，点击选区可编辑调整"
+        />
+      );
+    }
   }
 
   if (selectedItem) {
     const kps = parseKnowledgePoints(selectedItem.knowledge_points);
+    const canViewSource = Boolean(selectedItem.original_image_url && selectedItem.crop_bbox);
+
+    if (detailView === 'editor' && canViewSource && selectedItem.crop_bbox) {
+      if (updatingBbox || normalizingOriginal || !normalizedOriginalUrl) {
+        return (
+          <div className="flex flex-col items-center gap-3 py-16">
+            <Loader2 className="h-10 w-10 animate-spin text-[#7CB342]" />
+            <p className="text-[#8D6E63]">
+              {updatingBbox ? '正在更新框选并重新解析...' : '正在加载原图...'}
+            </p>
+          </div>
+        );
+      }
+      return (
+        <CropRegionEditor
+          imageUrl={normalizedOriginalUrl}
+          initialBBox={selectedItem.crop_bbox}
+          regionLabel="错题选区"
+          onConfirm={(bbox) => handleUpdateBbox(selectedItem.id, bbox)}
+          onCancel={() => setDetailView('source')}
+        />
+      );
+    }
+
+    if (detailView === 'source' && canViewSource && selectedItem.crop_bbox) {
+      if (normalizingOriginal || !normalizedOriginalUrl) {
+        return (
+          <div className="flex flex-col items-center gap-3 py-16">
+            <Loader2 className="h-10 w-10 animate-spin text-[#7CB342]" />
+            <p className="text-[#8D6E63]">正在加载原图...</p>
+          </div>
+        );
+      }
+      return (
+        <WrongQuestionSourceViewer
+          imageUrl={normalizedOriginalUrl}
+          bbox={selectedItem.crop_bbox}
+          onRecrop={() => setDetailView('editor')}
+        />
+      );
+    }
+
     return (
       <div className="space-y-4 pb-4">
-        <img
-          src={selectedItem.image_url}
+        <WrongQuestionCropImage
+          originalImageUrl={selectedItem.original_image_url}
+          cropBbox={selectedItem.crop_bbox}
+          legacyImageUrl={selectedItem.legacy_image_url ?? selectedItem.image_url}
           alt=""
-          className="w-full rounded-lg border-2 border-[#D7CCC8]"
+          className="w-full rounded-lg border-2 border-[#D7CCC8] object-contain"
+          onClick={canViewSource ? () => setDetailView('source') : undefined}
         />
+        {canViewSource && (
+          <p className="text-center text-xs text-[#8D6E63]">点击图片查看原始试卷并重新框选</p>
+        )}
         <div className="sketchy-card p-4">
           <div className="mb-2 flex flex-wrap gap-2">
             <span className="rounded bg-[#F5E6D3] px-2 py-0.5 text-xs">{selectedItem.subject}</span>
@@ -402,10 +526,15 @@ export function WrongQuestionsPanel({
               <button
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                onClick={() => setSelectedItemId(item.id)}
+                onClick={() => {
+                  setSelectedItemId(item.id);
+                  setDetailView('info');
+                }}
               >
-                <img
-                  src={item.image_url}
+                <WrongQuestionCropImage
+                  originalImageUrl={item.original_image_url}
+                  cropBbox={item.crop_bbox}
+                  legacyImageUrl={item.legacy_image_url ?? item.image_url}
                   alt=""
                   className="h-16 w-16 shrink-0 rounded-lg border-2 border-[#D7CCC8] object-cover"
                 />

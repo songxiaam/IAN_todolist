@@ -1,6 +1,7 @@
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { analyzeWrongQuestionCrop } from '@/lib/ai';
-import { cropImageBuffer, type NormalizedBBox } from '@/lib/image-crop';
+import { cropImageBuffer } from '@/lib/image-crop';
+import type { NormalizedBBox } from '@/lib/image-crop-types';
 
 const BUCKET = 'wrong-questions';
 
@@ -24,28 +25,8 @@ interface CreateWrongQuestionInput {
   };
 }
 
-async function uploadWrongQuestionCrop(
-  familyId: string,
-  studentId: string,
-  cropBuffer: Buffer,
-  ext = 'jpg',
-): Promise<string> {
-  const admin = getSupabaseAdminClient();
-  const path = `${familyId}/${studentId}/crops/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  const { error } = await admin.storage
-    .from(BUCKET)
-    .upload(path, cropBuffer, { contentType: 'image/jpeg', upsert: false });
-  if (error) throw new Error(error.message);
-  return path;
-}
-
 async function buildWrongQuestionRecord(input: CreateWrongQuestionInput) {
   const cropBuffer = await cropImageBuffer(input.sourceBuffer, input.bbox);
-  const cropPath = await uploadWrongQuestionCrop(
-    input.familyId,
-    input.studentId,
-    cropBuffer,
-  );
 
   let analysis = input.prefilled
     ? {
@@ -80,7 +61,7 @@ async function buildWrongQuestionRecord(input: CreateWrongQuestionInput) {
     student_id: input.studentId,
     family_id: input.familyId,
     subject: analysis.subject,
-    image_path: cropPath,
+    image_path: null,
     original_image_path: input.sourcePath,
     crop_bbox: JSON.stringify(input.bbox),
     source_type: input.sourceType,
@@ -96,4 +77,26 @@ async function buildWrongQuestionRecord(input: CreateWrongQuestionInput) {
   };
 }
 
-export { buildWrongQuestionRecord, uploadWrongQuestionCrop, BUCKET as WRONG_QUESTIONS_BUCKET };
+async function reanalyzeWrongQuestionFromBbox(
+  sourceBuffer: Buffer,
+  bbox: NormalizedBBox,
+  subjectHint?: string,
+) {
+  const cropBuffer = await cropImageBuffer(sourceBuffer, bbox);
+  const ai = await analyzeWrongQuestionCrop(cropBuffer, 'image/jpeg', subjectHint);
+  return {
+    subject: ai.subject,
+    question_text: ai.question,
+    student_answer: ai.student_answer,
+    correct_answer: ai.correct_answer,
+    solution_steps: ai.correct_answer,
+    error_analysis: ai.error_analysis,
+    knowledge_points: JSON.stringify(ai.knowledge_points),
+  };
+}
+
+export {
+  buildWrongQuestionRecord,
+  reanalyzeWrongQuestionFromBbox,
+  BUCKET as WRONG_QUESTIONS_BUCKET,
+};
